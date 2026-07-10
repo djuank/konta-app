@@ -264,6 +264,29 @@ nav.bottom-nav button i { font-size: 20px; }
 .notif-item { display: flex; gap: 10px; padding: 12px 0; border-bottom: 0.5px solid var(--border); }
 .notif-item:last-child { border-bottom: none; }
 
+.acordeon-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 10px 0;
+  cursor: pointer;
+  border-bottom: 0.5px solid var(--border);
+}
+.acordeon-header i.ti-chevron-right,
+.acordeon-header i.ti-chevron-down {
+  font-size: 14px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.acordeon-header span:first-of-type {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
 .empty-state {
   text-align: center;
   padding: 2rem 1rem;

@@ -52,6 +52,20 @@ export function listaCuentasConSaldo() {
   return cuentas.map((c) => ({ ...c, saldo: saldoCuenta(c.id) }));
 }
 
+export function obtenerCuenta(id) {
+  return queryOne('SELECT * FROM cuentas WHERE id = ?', [id]);
+}
+
+export function actualizarCuenta(id, { nombre, tipo, saldoInicial }) {
+  run('UPDATE cuentas SET nombre = ?, tipo = ?, saldo_inicial = ? WHERE id = ?', [
+    nombre, tipo, saldoInicial, id,
+  ]);
+}
+
+export function eliminarCuenta(id) {
+  run('UPDATE cuentas SET activa = 0 WHERE id = ?', [id]);
+}
+
 export function totalEnCuentas() {
   return listaCuentasConSaldo().reduce((sum, c) => sum + c.saldo, 0);
 }
@@ -225,11 +239,22 @@ export function listaPagosFijos() {
 export function estadoPagosFijosMes() {
   const pagos = listaPagosFijos();
   return pagos.map((p) => {
-    const mov = queryOne(
-      `SELECT * FROM movimientos WHERE pago_fijo_id = ? AND date(fecha) >= date('now','start of month') ORDER BY fecha DESC LIMIT 1`,
+    const pagosDelMes = queryAll(
+      `SELECT * FROM movimientos WHERE pago_fijo_id = ? AND date(fecha) >= date('now','start of month') ORDER BY fecha DESC`,
       [p.id]
     );
-    return { ...p, pagado: !!mov, movimiento: mov || null };
+    const totalPagado = pagosDelMes.reduce((sum, m) => sum + m.monto, 0);
+    let estado = 'pendiente';
+    if (totalPagado > 0 && totalPagado < p.monto_esperado) estado = 'parcial';
+    else if (totalPagado > 0 && totalPagado >= p.monto_esperado) estado = 'completo';
+    return {
+      ...p,
+      pagos: pagosDelMes,
+      totalPagado,
+      restante: Math.max(0, p.monto_esperado - totalPagado),
+      estado,
+      pagado: estado === 'completo', // se mantiene por compatibilidad
+    };
   });
 }
 
@@ -296,23 +321,56 @@ export function desmarcarPagoFijo(movimientoId) {
 // proyectar tu mes ANTES de que termine — no con promedios históricos.
 
 export function listaIngresosFijos() {
-  return queryAll('SELECT * FROM ingresos_fijos WHERE activo = 1 ORDER BY dia_esperado, nombre');
+  return queryAll(
+    `SELECT i.*, c.nombre AS categoria_nombre, c.icono
+     FROM ingresos_fijos i LEFT JOIN categorias c ON c.id = i.categoria_id
+     WHERE i.activo = 1 ORDER BY i.dia_esperado, i.nombre`
+  );
 }
 
-export function agregarIngresoFijo({ nombre, montoEsperado, diaEsperado }) {
-  run('INSERT INTO ingresos_fijos (nombre, monto_esperado, dia_esperado) VALUES (?, ?, ?)', [
-    nombre, montoEsperado || 0, diaEsperado || null,
+export function estadoIngresosFijosMes() {
+  const ingresos = listaIngresosFijos();
+  return ingresos.map((i) => {
+    const mov = queryOne(
+      `SELECT * FROM movimientos WHERE ingreso_fijo_id = ? AND date(fecha) >= date('now','start of month') ORDER BY fecha DESC LIMIT 1`,
+      [i.id]
+    );
+    return { ...i, recibido: !!mov, movimiento: mov || null };
+  });
+}
+
+export function agregarIngresoFijo({ nombre, montoEsperado, categoriaId, diaEsperado }) {
+  run('INSERT INTO ingresos_fijos (nombre, monto_esperado, categoria_id, dia_esperado) VALUES (?, ?, ?, ?)', [
+    nombre, montoEsperado || 0, categoriaId || null, diaEsperado || null,
   ]);
 }
 
-export function actualizarIngresoFijo(id, { nombre, montoEsperado, diaEsperado }) {
-  run('UPDATE ingresos_fijos SET nombre = ?, monto_esperado = ?, dia_esperado = ? WHERE id = ?', [
-    nombre, montoEsperado || 0, diaEsperado || null, id,
+export function actualizarIngresoFijo(id, { nombre, montoEsperado, categoriaId, diaEsperado }) {
+  run('UPDATE ingresos_fijos SET nombre = ?, monto_esperado = ?, categoria_id = ?, dia_esperado = ? WHERE id = ?', [
+    nombre, montoEsperado || 0, categoriaId || null, diaEsperado || null, id,
   ]);
 }
 
 export function eliminarIngresoFijo(id) {
   run('UPDATE ingresos_fijos SET activo = 0 WHERE id = ?', [id]);
+}
+
+// Marcar un ingreso fijo como recibido (ej. ya cayó la nómina, ya pagaron
+// el arriendo). Crea el movimiento real, igual que con los pagos fijos.
+export function marcarIngresoFijoRecibido(ingresoFijoId, { monto, cuentaId, fecha, nota }) {
+  const ingreso = queryOne('SELECT * FROM ingresos_fijos WHERE id = ?', [ingresoFijoId]);
+  if (!ingreso) return;
+  const categoriaId = ingreso.categoria_id || categorias('ingreso')[0]?.id;
+  run(
+    'INSERT INTO movimientos (fecha, cuenta_id, categoria_id, monto, tipo, nota, ingreso_fijo_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [fecha, cuentaId, categoriaId, monto, 'ingreso', nota || null, ingresoFijoId]
+  );
+  guardarSnapshotPatrimonio();
+}
+
+export function desmarcarIngresoFijo(movimientoId) {
+  run('DELETE FROM movimientos WHERE id = ?', [movimientoId]);
+  guardarSnapshotPatrimonio();
 }
 
 export function totalIngresosFijos() {

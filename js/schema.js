@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS ingresos_fijos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   nombre TEXT NOT NULL,
   monto_esperado REAL NOT NULL DEFAULT 0,
+  categoria_id INTEGER REFERENCES categorias(id),
   dia_esperado INTEGER,
   activo INTEGER NOT NULL DEFAULT 1
 );
@@ -44,7 +45,8 @@ CREATE TABLE IF NOT EXISTS movimientos (
   monto REAL NOT NULL,
   tipo TEXT NOT NULL CHECK (tipo IN ('ingreso','gasto')),
   nota TEXT,
-  pago_fijo_id INTEGER REFERENCES pagos_fijos(id)
+  pago_fijo_id INTEGER REFERENCES pagos_fijos(id),
+  ingreso_fijo_id INTEGER REFERENCES ingresos_fijos(id)
 );
 
 CREATE TABLE IF NOT EXISTS lo_que_tengo (

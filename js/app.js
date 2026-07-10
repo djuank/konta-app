@@ -8,6 +8,7 @@ import {
 const app = document.getElementById('app');
 let currentScreen = 'inicio';
 let currentPeriodo = 'semana';
+let seccionesAbiertas = new Set(); // categorías desplegadas en los acordeones
 
 const fmt = (v) => '$' + Math.round(v || 0).toLocaleString('es-CO');
 const pct = (v) => Math.round(v || 0) + '%';
@@ -117,23 +118,40 @@ function attachGlobalEvents() {
       if (mov) openModalMovimiento(mov);
     });
   });
+  app.querySelectorAll('[data-acordeon]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const clave = btn.dataset.acordeon;
+      if (seccionesAbiertas.has(clave)) seccionesAbiertas.delete(clave);
+      else seccionesAbiertas.add(clave);
+      render();
+    });
+  });
   app.querySelectorAll('[data-pago-fijo-row]').forEach((row) => {
     row.addEventListener('click', () => {
       const id = Number(row.dataset.pagoFijoRow);
       const pago = domain.estadoPagosFijosMes().find((p) => p.id === id);
-      if (!pago) return;
-      if (pago.pagado) {
-        if (confirm(`¿Deshacer el pago de "${pago.nombre}" este mes?`)) {
-          domain.desmarcarPagoFijo(pago.movimiento.id);
-          render();
-        }
-      } else {
-        openModalMarcarPago(pago);
-      }
+      if (pago) openModalDetallePagoFijo(pago);
     });
   });
   const btnAddPagoFijo = document.getElementById('btn-add-pago-fijo');
   if (btnAddPagoFijo) btnAddPagoFijo.addEventListener('click', () => openModalPagoFijo());
+  app.querySelectorAll('[data-ingreso-fijo-row]').forEach((row) => {
+    row.addEventListener('click', () => {
+      const id = Number(row.dataset.ingresoFijoRow);
+      const ingreso = domain.estadoIngresosFijosMes().find((i) => i.id === id);
+      if (!ingreso) return;
+      if (ingreso.recibido) {
+        if (confirm(`¿Deshacer el ingreso de "${ingreso.nombre}" este mes?`)) {
+          domain.desmarcarIngresoFijo(ingreso.movimiento.id);
+          render();
+        }
+      } else {
+        openModalMarcarIngreso(ingreso);
+      }
+    });
+  });
+  const btnAddIngresoFijoInicio = document.getElementById('btn-add-ingreso-fijo-inicio');
+  if (btnAddIngresoFijoInicio) btnAddIngresoFijoInicio.addEventListener('click', () => openModalIngresoFijo());
 }
 
 // ---------- Pantalla: Inicio ----------
@@ -143,6 +161,7 @@ function screenInicio() {
   const resumenMes = domain.resumenPeriodo('mes');
   const ultimos = domain.ultimosMovimientos(4);
   const pagosFijos = domain.estadoPagosFijosMes();
+  const ingresosFijos = domain.estadoIngresosFijosMes();
   const plan = domain.planGastoConsciente();
 
   return `
@@ -204,6 +223,15 @@ function screenInicio() {
     </div>
 
     <div class="row-between">
+      <h2 style="margin-bottom:0;">Ingresos fijos de este mes</h2>
+      <button class="icon-btn" id="btn-add-ingreso-fijo-inicio" aria-label="Agregar ingreso fijo"><i class="ti ti-plus" aria-hidden="true"></i></button>
+    </div>
+    <div class="card">
+      ${ingresosFijos.length === 0 ? emptyState('ti-cash', 'No tienes ingresos fijos registrados todavía') :
+        renderIngresosFijosAgrupados(ingresosFijos)}
+    </div>
+
+    <div class="row-between">
       <h2 style="margin-bottom:0;">Pagos fijos de este mes</h2>
       <button class="icon-btn" id="btn-add-pago-fijo" aria-label="Agregar pago fijo"><i class="ti ti-plus" aria-hidden="true"></i></button>
     </div>
@@ -232,12 +260,22 @@ function agruparPorCategoria(lista) {
 
 function renderPagosFijosAgrupados(pagosFijos) {
   const grupos = agruparPorCategoria(pagosFijos);
-  const nombres = Object.keys(grupos);
-  return nombres.map((nombreGrupo, idx) => `
-    ${idx > 0 ? '<div style="height:14px;"></div>' : ''}
-    <p class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.03em;margin:0 0 4px;">${nombreGrupo}</p>
-    ${grupos[nombreGrupo].map((p) => pagoFijoRow(p)).join('')}
-  `).join('');
+  return Object.keys(grupos).map((nombreGrupo) => {
+    const items = grupos[nombreGrupo];
+    const clave = `pago:${nombreGrupo}`;
+    const abierta = seccionesAbiertas.has(clave);
+    const totalPagado = items.reduce((s, p) => s + p.totalPagado, 0);
+    const totalEsperado = items.reduce((s, p) => s + p.monto_esperado, 0);
+    const completos = items.filter((p) => p.estado === 'completo').length;
+    return `
+      <button class="acordeon-header" data-acordeon="${clave}">
+        <i class="ti ${abierta ? 'ti-chevron-down' : 'ti-chevron-right'}" aria-hidden="true"></i>
+        <span style="flex:1;text-align:left;">${nombreGrupo}</span>
+        <span class="muted" style="font-size:12px;">${completos}/${items.length} · ${fmt(totalPagado)} de ${fmt(totalEsperado)}</span>
+      </button>
+      ${abierta ? `<div style="padding:2px 0 8px;">${items.map((p) => pagoFijoRow(p)).join('')}</div>` : ''}
+    `;
+  }).join('');
 }
 
 function renderPagosFijosAjustesAgrupados(pagosFijos) {
@@ -260,16 +298,57 @@ function renderPagosFijosAjustesAgrupados(pagosFijos) {
 }
 
 function pagoFijoRow(p) {
+  const badgeTono = p.estado === 'completo' ? 'success' : p.estado === 'parcial' ? 'warning' : 'warning';
+  const icono = p.estado === 'completo' ? 'ti-check' : p.estado === 'parcial' ? 'ti-progress' : 'ti-clock';
+  let subtexto;
+  if (p.estado === 'completo') subtexto = 'Pagado este mes';
+  else if (p.estado === 'parcial') subtexto = `Pagado ${fmt(p.totalPagado)} de ${fmt(p.monto_esperado)} · falta ${fmt(p.restante)}`;
+  else subtexto = p.dia_esperado ? `Vence cerca del día ${p.dia_esperado}` : 'Pendiente este mes';
+
   return `
     <div class="list-item" data-pago-fijo-row="${p.id}" style="cursor:pointer;">
-      <div class="icon-badge ${p.pagado ? 'success' : 'warning'}">
-        <i class="ti ${p.pagado ? 'ti-check' : 'ti-clock'}" aria-hidden="true"></i>
+      <div class="icon-badge ${badgeTono}">
+        <i class="ti ${icono}" aria-hidden="true"></i>
       </div>
       <div style="flex:1;">
         <p style="font-size:13px;margin:0;">${p.nombre}${p.deuda_nombre ? ` <span class="muted" style="font-size:11px;">· abona a ${p.deuda_nombre}</span>` : ''}</p>
-        <p class="muted" style="margin:0;">${p.pagado ? 'Pagado este mes' : (p.dia_esperado ? `Vence cerca del día ${p.dia_esperado}` : 'Pendiente este mes')}</p>
+        <p class="muted" style="margin:0;">${subtexto}</p>
       </div>
-      <span style="font-size:13px;font-weight:500;" class="${p.pagado ? 'pos' : ''}">${fmt(p.pagado ? p.movimiento.monto : p.monto_esperado)}</span>
+      <span style="font-size:13px;font-weight:500;" class="${p.estado === 'completo' ? 'pos' : ''}">${fmt(p.estado === 'pendiente' ? p.monto_esperado : p.totalPagado)}</span>
+    </div>
+  `;
+}
+
+function renderIngresosFijosAgrupados(ingresosFijos) {
+  const grupos = agruparPorCategoria(ingresosFijos);
+  return Object.keys(grupos).map((nombreGrupo) => {
+    const items = grupos[nombreGrupo];
+    const clave = `ingreso:${nombreGrupo}`;
+    const abierta = seccionesAbiertas.has(clave);
+    const totalEsperado = items.reduce((s, i) => s + i.monto_esperado, 0);
+    const recibidos = items.filter((i) => i.recibido).length;
+    return `
+      <button class="acordeon-header" data-acordeon="${clave}">
+        <i class="ti ${abierta ? 'ti-chevron-down' : 'ti-chevron-right'}" aria-hidden="true"></i>
+        <span style="flex:1;text-align:left;">${nombreGrupo}</span>
+        <span class="muted" style="font-size:12px;">${recibidos}/${items.length} · ${fmt(totalEsperado)}</span>
+      </button>
+      ${abierta ? `<div style="padding:2px 0 8px;">${items.map((i) => ingresoFijoRow(i)).join('')}</div>` : ''}
+    `;
+  }).join('');
+}
+
+function ingresoFijoRow(i) {
+  return `
+    <div class="list-item" data-ingreso-fijo-row="${i.id}" style="cursor:pointer;">
+      <div class="icon-badge ${i.recibido ? 'success' : 'warning'}">
+        <i class="ti ${i.recibido ? 'ti-check' : 'ti-clock'}" aria-hidden="true"></i>
+      </div>
+      <div style="flex:1;">
+        <p style="font-size:13px;margin:0;">${i.nombre}</p>
+        <p class="muted" style="margin:0;">${i.recibido ? 'Recibido este mes' : (i.dia_esperado ? `Se espera cerca del día ${i.dia_esperado}` : 'Pendiente este mes')}</p>
+      </div>
+      <span style="font-size:13px;font-weight:500;" class="${i.recibido ? 'pos' : ''}">${fmt(i.recibido ? i.movimiento.monto : i.monto_esperado)}</span>
     </div>
   `;
 }
@@ -438,48 +517,138 @@ function openModalMovimiento(movimientoExistente) {
 
 // ---------- Modal: marcar pago fijo como pagado ----------
 
-function openModalMarcarPago(pago) {
+function openModalDetallePagoFijo(pagoInicial) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  document.body.appendChild(overlay);
+
+  function renderContenido() {
+    const pago = domain.estadoPagosFijosMes().find((p) => p.id === pagoInicial.id);
+    if (!pago) { overlay.remove(); return; }
+    const cuentas = queryAll('SELECT * FROM cuentas WHERE activa = 1');
+
+    overlay.innerHTML = `
+      <div class="modal-sheet">
+        <div class="row-between" style="margin-bottom:14px;">
+          <h2 style="margin:0;">${pago.nombre}</h2>
+          <button class="icon-btn" id="modal-close" aria-label="Cerrar"><i class="ti ti-x" aria-hidden="true"></i></button>
+        </div>
+
+        <div class="row-between" style="font-size:13px;margin-bottom:4px;">
+          <span class="muted">Esperado</span><span style="font-weight:500;">${fmt(pago.monto_esperado)}</span>
+        </div>
+        <div class="row-between" style="font-size:13px;margin-bottom:10px;">
+          <span class="muted">Pagado hasta ahora</span><span style="font-weight:500;" class="${pago.estado === 'completo' ? 'pos' : ''}">${fmt(pago.totalPagado)}</span>
+        </div>
+        ${pago.restante > 0 ? `<div class="row-between" style="font-size:13px;margin-bottom:14px;">
+          <span class="muted">Falta</span><span style="font-weight:500;">${fmt(pago.restante)}</span>
+        </div>` : ''}
+        ${pago.deuda_nombre ? `<p class="muted" style="margin:0 0 14px;">Cada pago de este item abona a "${pago.deuda_nombre}".</p>` : ''}
+
+        ${pago.pagos.length > 0 ? `
+          <p class="label" style="margin-bottom:6px;">Pagos registrados este mes</p>
+          ${pago.pagos.map((m) => `
+            <div class="list-item">
+              <div class="icon-badge success" style="width:26px;height:26px;"><i class="ti ti-check" style="font-size:13px;" aria-hidden="true"></i></div>
+              <div style="flex:1;"><p style="font-size:13px;margin:0;">${m.fecha}</p></div>
+              <span style="font-size:13px;font-weight:500;margin-right:6px;">${fmt(m.monto)}</span>
+              <button class="icon-btn" data-eliminar-pago="${m.id}" aria-label="Eliminar pago"><i class="ti ti-trash" style="font-size:15px;" aria-hidden="true"></i></button>
+            </div>
+          `).join('')}
+          <div style="height:10px;"></div>
+        ` : ''}
+
+        <p class="label" style="margin-bottom:6px;">${pago.pagos.length > 0 ? 'Agregar otro pago' : 'Registrar pago'}</p>
+        <div class="field">
+          <input type="number" id="dp-monto" placeholder="0" min="0" step="1" value="${pago.restante > 0 ? pago.restante : ''}" />
+          <p class="muted" id="dp-monto-error" style="display:none;color:var(--danger-text);margin:4px 0 0;">Escribe cuánto pagaste.</p>
+        </div>
+        <div class="field">
+          ${cuentas.length === 0
+            ? '<p class="muted" style="color:var(--danger-text);">Primero agrega una cuenta en la pestaña Cuentas.</p>'
+            : `<select id="dp-cuenta">${cuentas.map((c) => `<option value="${c.id}">${c.nombre}</option>`).join('')}</select>`}
+        </div>
+        <div class="field">
+          <input type="date" id="dp-fecha" value="${new Date().toISOString().slice(0, 10)}" />
+        </div>
+        <button class="primary" id="dp-guardar" style="width:100%;">Agregar pago</button>
+      </div>
+    `;
+
+    overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
+    overlay.querySelectorAll('[data-eliminar-pago]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (confirm('¿Eliminar este pago?')) {
+          domain.desmarcarPagoFijo(Number(btn.dataset.eliminarPago));
+          renderContenido();
+          render();
+        }
+      });
+    });
+    overlay.querySelector('#dp-guardar').addEventListener('click', () => {
+      const montoInput = overlay.querySelector('#dp-monto');
+      const monto = Number(montoInput.value);
+      const cuentaSelect = overlay.querySelector('#dp-cuenta');
+      const sinMonto = !monto || monto <= 0;
+      overlay.querySelector('#dp-monto-error').style.display = sinMonto ? 'block' : 'none';
+      montoInput.style.borderColor = sinMonto ? 'var(--danger-text)' : '';
+      if (sinMonto || !cuentaSelect) return;
+      const cuentaId = Number(cuentaSelect.value);
+      const fecha = overlay.querySelector('#dp-fecha').value;
+      domain.marcarPagoFijoPagado(pago.id, { monto, cuentaId, fecha });
+      renderContenido();
+      render();
+    });
+  }
+
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  renderContenido();
+}
+
+// ---------- Modal: marcar ingreso fijo como recibido ----------
+
+function openModalMarcarIngreso(ingreso) {
   const cuentas = queryAll('SELECT * FROM cuentas WHERE activa = 1');
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal-sheet">
       <div class="row-between" style="margin-bottom:14px;">
-        <h2 style="margin:0;">Marcar "${pago.nombre}" como pagado</h2>
+        <h2 style="margin:0;">Marcar "${ingreso.nombre}" como recibido</h2>
         <button class="icon-btn" id="modal-close" aria-label="Cerrar"><i class="ti ti-x" aria-hidden="true"></i></button>
       </div>
       <div class="field">
-        <label>¿Cuánto pagaste?</label>
-        <input type="number" id="pf-monto" value="${pago.monto_esperado || ''}" placeholder="0" min="0" step="1" />
-        <p class="muted" id="pf-monto-error" style="display:none;color:var(--danger-text);margin:4px 0 0;">Escribe cuánto pagaste.</p>
+        <label>¿Cuánto recibiste?</label>
+        <input type="number" id="if-monto-real" value="${ingreso.monto_esperado || ''}" placeholder="0" min="0" step="1" />
+        <p class="muted" id="if-monto-real-error" style="display:none;color:var(--danger-text);margin:4px 0 0;">Escribe cuánto recibiste.</p>
       </div>
       <div class="field">
-        <label>¿De qué cuenta?</label>
+        <label>¿A qué cuenta llegó?</label>
         ${cuentas.length === 0
           ? '<p class="muted" style="color:var(--danger-text);">Primero agrega una cuenta en la pestaña Cuentas.</p>'
-          : `<select id="pf-cuenta">${cuentas.map((c) => `<option value="${c.id}">${c.nombre}</option>`).join('')}</select>`}
+          : `<select id="if-cuenta">${cuentas.map((c) => `<option value="${c.id}">${c.nombre}</option>`).join('')}</select>`}
       </div>
       <div class="field">
         <label>Fecha</label>
-        <input type="date" id="pf-fecha" value="${new Date().toISOString().slice(0, 10)}" />
+        <input type="date" id="if-fecha" value="${new Date().toISOString().slice(0, 10)}" />
       </div>
-      <button class="primary" id="pf-guardar" style="width:100%;">Marcar como pagado</button>
+      <button class="primary" id="if-guardar" style="width:100%;">Marcar como recibido</button>
     </div>
   `;
   document.body.appendChild(overlay);
   overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-  overlay.querySelector('#pf-guardar').addEventListener('click', () => {
-    const montoInput = overlay.querySelector('#pf-monto');
+  overlay.querySelector('#if-guardar').addEventListener('click', () => {
+    const montoInput = overlay.querySelector('#if-monto-real');
     const monto = Number(montoInput.value);
-    const cuentaSelect = overlay.querySelector('#pf-cuenta');
+    const cuentaSelect = overlay.querySelector('#if-cuenta');
     const sinMonto = !monto || monto <= 0;
-    overlay.querySelector('#pf-monto-error').style.display = sinMonto ? 'block' : 'none';
+    overlay.querySelector('#if-monto-real-error').style.display = sinMonto ? 'block' : 'none';
     montoInput.style.borderColor = sinMonto ? 'var(--danger-text)' : '';
     if (sinMonto || !cuentaSelect) return;
     const cuentaId = Number(cuentaSelect.value);
-    const fecha = overlay.querySelector('#pf-fecha').value;
-    domain.marcarPagoFijoPagado(pago.id, { monto, cuentaId, fecha });
+    const fecha = overlay.querySelector('#if-fecha').value;
+    domain.marcarIngresoFijoRecibido(ingreso.id, { monto, cuentaId, fecha });
     overlay.remove();
     render();
   });
@@ -489,6 +658,7 @@ function openModalMarcarPago(pago) {
 
 function openModalIngresoFijo(ingresoExistente) {
   const esEdicion = !!ingresoExistente;
+  const catIngreso = domain.categorias('ingreso');
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
@@ -506,6 +676,12 @@ function openModalIngresoFijo(ingresoExistente) {
         <input type="number" id="if-monto-esperado" placeholder="0" value="${esEdicion ? ingresoExistente.monto_esperado : ''}" />
       </div>
       <div class="field">
+        <label>Categoría</label>
+        <select id="if-categoria">
+          ${catIngreso.map((c) => `<option value="${c.id}" ${esEdicion && ingresoExistente.categoria_id === c.id ? 'selected' : ''}>${c.nombre}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
         <label>Día aproximado del mes (opcional)</label>
         <input type="number" id="if-dia" min="1" max="31" placeholder="Ej: 30" value="${esEdicion && ingresoExistente.dia_esperado ? ingresoExistente.dia_esperado : ''}" />
       </div>
@@ -520,11 +696,12 @@ function openModalIngresoFijo(ingresoExistente) {
     const nombre = overlay.querySelector('#if-nombre').value.trim();
     if (!nombre) { overlay.querySelector('#if-nombre').focus(); return; }
     const montoEsperado = Number(overlay.querySelector('#if-monto-esperado').value) || 0;
+    const categoriaId = Number(overlay.querySelector('#if-categoria').value);
     const diaEsperado = Number(overlay.querySelector('#if-dia').value) || null;
     if (esEdicion) {
-      domain.actualizarIngresoFijo(ingresoExistente.id, { nombre, montoEsperado, diaEsperado });
+      domain.actualizarIngresoFijo(ingresoExistente.id, { nombre, montoEsperado, categoriaId, diaEsperado });
     } else {
-      domain.agregarIngresoFijo({ nombre, montoEsperado, diaEsperado });
+      domain.agregarIngresoFijo({ nombre, montoEsperado, categoriaId, diaEsperado });
     }
     overlay.remove();
     render();
@@ -615,8 +792,9 @@ function screenCuentas() {
   return `
     <h1>Cuentas</h1>
     <div class="card">
-      ${cuentas.map((c) => `
-        <div class="list-item">
+      ${cuentas.length === 0 ? emptyState('ti-wallet', 'No tienes cuentas todavía') :
+        cuentas.map((c) => `
+        <div class="list-item" data-cuenta-id="${c.id}" style="cursor:pointer;">
           <div class="icon-badge neutral"><i class="ti ti-wallet" aria-hidden="true"></i></div>
           <div style="flex:1;">
             <p style="font-size:13px;margin:0;">${c.nombre}</p>
@@ -632,31 +810,43 @@ function screenCuentas() {
 
 function attachCuentasEvents() {
   const btn = document.getElementById('btn-add-cuenta');
-  if (btn) btn.addEventListener('click', openModalCuenta);
+  if (btn) btn.addEventListener('click', () => openModalCuenta());
+  document.querySelectorAll('[data-cuenta-id]').forEach((row) => {
+    row.addEventListener('click', () => {
+      const cuenta = domain.listaCuentasConSaldo().find((c) => c.id === Number(row.dataset.cuentaId));
+      if (cuenta) openModalCuenta(cuenta);
+    });
+  });
 }
 
-function openModalCuenta() {
+function openModalCuenta(cuentaExistente) {
+  const esEdicion = !!cuentaExistente;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal-sheet">
       <div class="row-between" style="margin-bottom:14px;">
-        <h2 style="margin:0;">Nueva cuenta</h2>
+        <h2 style="margin:0;">${esEdicion ? 'Editar cuenta' : 'Nueva cuenta'}</h2>
         <button class="icon-btn" id="modal-close" aria-label="Cerrar"><i class="ti ti-x" aria-hidden="true"></i></button>
       </div>
-      <div class="field"><label>Nombre</label><input type="text" id="cta-nombre" placeholder="Ej: Nequi" /></div>
+      <div class="field"><label>Nombre</label><input type="text" id="cta-nombre" placeholder="Ej: Nequi" value="${esEdicion ? cuentaExistente.nombre : ''}" /></div>
       <div class="field">
         <label>Tipo</label>
         <select id="cta-tipo">
-          <option value="efectivo">Efectivo</option>
-          <option value="ahorros">Ahorros</option>
-          <option value="corriente">Corriente</option>
-          <option value="tarjeta_credito">Tarjeta de crédito</option>
-          <option value="billetera_digital">Billetera digital</option>
+          <option value="efectivo" ${esEdicion && cuentaExistente.tipo === 'efectivo' ? 'selected' : ''}>Efectivo</option>
+          <option value="ahorros" ${esEdicion && cuentaExistente.tipo === 'ahorros' ? 'selected' : ''}>Ahorros</option>
+          <option value="corriente" ${esEdicion && cuentaExistente.tipo === 'corriente' ? 'selected' : ''}>Corriente</option>
+          <option value="tarjeta_credito" ${esEdicion && cuentaExistente.tipo === 'tarjeta_credito' ? 'selected' : ''}>Tarjeta de crédito</option>
+          <option value="billetera_digital" ${esEdicion && cuentaExistente.tipo === 'billetera_digital' ? 'selected' : ''}>Billetera digital</option>
         </select>
       </div>
-      <div class="field"><label>Saldo actual</label><input type="number" id="cta-saldo" placeholder="0" /></div>
-      <button class="primary" id="cta-guardar" style="width:100%;">Guardar</button>
+      <div class="field">
+        <label>Saldo actual</label>
+        <input type="number" id="cta-saldo" placeholder="0" value="${esEdicion ? cuentaExistente.saldo : ''}" />
+        ${esEdicion ? '<p class="muted" style="margin:4px 0 0;">Ajusta este número si el saldo no coincide con la realidad.</p>' : ''}
+      </div>
+      <button class="primary" id="cta-guardar" style="width:100%;margin-bottom:8px;">Guardar</button>
+      ${esEdicion ? '<button id="cta-eliminar" style="width:100%;color:var(--danger-text);">Eliminar cuenta</button>' : ''}
     </div>
   `;
   document.body.appendChild(overlay);
@@ -665,12 +855,28 @@ function openModalCuenta() {
   overlay.querySelector('#cta-guardar').addEventListener('click', () => {
     const nombre = overlay.querySelector('#cta-nombre').value.trim();
     const tipo = overlay.querySelector('#cta-tipo').value;
-    const saldo = Number(overlay.querySelector('#cta-saldo').value) || 0;
+    const saldoIngresado = Number(overlay.querySelector('#cta-saldo').value) || 0;
     if (!nombre) { overlay.querySelector('#cta-nombre').focus(); return; }
-    run('INSERT INTO cuentas (nombre, tipo, saldo_inicial) VALUES (?, ?, ?)', [nombre, tipo, saldo]);
+    if (esEdicion) {
+      // El campo muestra el saldo actual (ya incluye movimientos); recalculamos
+      // el saldo inicial para que el saldo actual quede exactamente en lo que escribiste.
+      const movimientosNetos = cuentaExistente.saldo - cuentaExistente.saldo_inicial;
+      const nuevoSaldoInicial = saldoIngresado - movimientosNetos;
+      domain.actualizarCuenta(cuentaExistente.id, { nombre, tipo, saldoInicial: nuevoSaldoInicial });
+    } else {
+      run('INSERT INTO cuentas (nombre, tipo, saldo_inicial) VALUES (?, ?, ?)', [nombre, tipo, saldoIngresado]);
+    }
     overlay.remove();
     render();
   });
+  const btnEliminar = overlay.querySelector('#cta-eliminar');
+  if (btnEliminar) {
+    btnEliminar.addEventListener('click', () => {
+      domain.eliminarCuenta(cuentaExistente.id);
+      overlay.remove();
+      render();
+    });
+  }
 }
 
 // ---------- Pantalla: Inversiones ----------

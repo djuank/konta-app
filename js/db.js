@@ -37,9 +37,18 @@ function ensureColumnasNuevas() {
     db.run('ALTER TABLE movimientos ADD COLUMN pago_fijo_id INTEGER REFERENCES pagos_fijos(id)');
     persist();
   }
+  if (!columnasMov.includes('ingreso_fijo_id')) {
+    db.run('ALTER TABLE movimientos ADD COLUMN ingreso_fijo_id INTEGER REFERENCES ingresos_fijos(id)');
+    persist();
+  }
   const columnasPF = queryAll("PRAGMA table_info(pagos_fijos)").map((c) => c.name);
   if (!columnasPF.includes('deuda_id')) {
     db.run('ALTER TABLE pagos_fijos ADD COLUMN deuda_id INTEGER REFERENCES lo_que_debo(id)');
+    persist();
+  }
+  const columnasIF = queryAll("PRAGMA table_info(ingresos_fijos)").map((c) => c.name);
+  if (!columnasIF.includes('categoria_id')) {
+    db.run('ALTER TABLE ingresos_fijos ADD COLUMN categoria_id INTEGER REFERENCES categorias(id)');
     persist();
   }
 }
