@@ -1,8 +1,14 @@
-import { initDatabase, run, queryAll, getConfig, setConfig, getRawBytes, replaceDatabase } from './db.js';
+import {
+  run, queryAll, getConfig, setConfig, getRawBytes, replaceDatabase,
+  prepararArranque, abrirBaseDatos, establecerLlaveMaestra, olvidarLlaveMaestra,
+  tieneLlaveMaestra, persistInmediato, descifrarBytes, desactivarCifradoYGuardarPlano,
+} from './db.js';
 import * as domain from './domain.js';
 import { TIPOS_INVERSION } from './schema.js';
+import * as security from './security.js';
 import {
   downloadDatabaseFile, downloadJsonExport, pickFile, readFileAsUint8Array,
+  loadSecurityConfig, saveSecurityConfig, clearSecurityConfig,
 } from './storage.js';
 
 const app = document.getElementById('app');
@@ -1443,6 +1449,24 @@ function screenConfiguracion() {
         renderPagosFijosAjustesAgrupados(pagosFijos)}
     </div>
 
+    <h2>Seguridad</h2>
+    <div class="card">
+      ${securityConfigCache ? `
+        <p class="row" style="gap:6px;color:var(--success-text);margin-bottom:12px;"><i class="ti ti-shield-check" aria-hidden="true"></i> Tus datos están cifrados en este dispositivo</p>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <button id="btn-bloquear-ahora"><i class="ti ti-lock" aria-hidden="true"></i> Bloquear ahora</button>
+          <button id="btn-cambiar-pin"><i class="ti ti-key" aria-hidden="true"></i> Cambiar PIN</button>
+          ${securityConfigCache.biometria
+            ? '<button id="btn-quitar-faceid"><i class="ti ti-face-id" aria-hidden="true"></i> Desactivar Face ID / Touch ID</button>'
+            : '<button id="btn-activar-faceid-ajustes"><i class="ti ti-face-id" aria-hidden="true"></i> Activar Face ID / Touch ID</button>'}
+          <button id="btn-desactivar-seguridad" style="color:var(--danger-text);"><i class="ti ti-shield-off" aria-hidden="true"></i> Desactivar seguridad</button>
+        </div>
+      ` : `
+        <p class="muted" style="margin-bottom:12px;">Tu app no tiene PIN ni cifrado activado. Cualquiera que abra tu teléfono puede ver tu información financiera.</p>
+        <button class="primary" id="btn-activar-seguridad" style="width:100%;">Activar seguridad</button>
+      `}
+    </div>
+
     <h2>Respaldo de tus datos</h2>
     <div class="card">
       <p class="muted" style="margin-bottom:12px;">Guarda una copia de toda tu información, o restaura una copia anterior.</p>
@@ -1511,6 +1535,445 @@ function attachConfiguracionEvents() {
     await replaceDatabase(bytes);
     render();
   });
+
+  const btnActivarSeguridad = document.getElementById('btn-activar-seguridad');
+  if (btnActivarSeguridad) btnActivarSeguridad.addEventListener('click', () => {
+    asistenteSeguridad((configurado) => {
+      if (configurado) {
+        setConfig('seguridad_omitida', '0');
+        actualizarCacheSeguridad().then(() => { activarAutoBloqueo(); render(); });
+      } else {
+        render();
+      }
+    });
+  });
+
+  const btnBloquearAhora = document.getElementById('btn-bloquear-ahora');
+  if (btnBloquearAhora) btnBloquearAhora.addEventListener('click', () => {
+    olvidarLlaveMaestra();
+    bloquearApp();
+  });
+
+  const btnCambiarPin = document.getElementById('btn-cambiar-pin');
+  if (btnCambiarPin) btnCambiarPin.addEventListener('click', () => abrirModalCambiarPin());
+
+  const btnActivarFaceIdAjustes = document.getElementById('btn-activar-faceid-ajustes');
+  if (btnActivarFaceIdAjustes) btnActivarFaceIdAjustes.addEventListener('click', () => activarFaceIdDesdeAjustes());
+
+  const btnQuitarFaceId = document.getElementById('btn-quitar-faceid');
+  if (btnQuitarFaceId) btnQuitarFaceId.addEventListener('click', async () => {
+    const config = await loadSecurityConfig();
+    config.biometria = null;
+    await saveSecurityConfig(config);
+    await actualizarCacheSeguridad();
+    render();
+  });
+
+  const btnDesactivarSeguridad = document.getElementById('btn-desactivar-seguridad');
+  if (btnDesactivarSeguridad) btnDesactivarSeguridad.addEventListener('click', async () => {
+    if (!confirm('Tus datos van a quedar sin cifrar en este dispositivo. ¿Seguro que quieres desactivar la seguridad?')) return;
+    await desactivarCifradoYGuardarPlano();
+    await clearSecurityConfig();
+    securityConfigCache = null;
+    render();
+  });
+}
+
+async function actualizarCacheSeguridad() {
+  securityConfigCache = await loadSecurityConfig();
+}
+
+function abrirModalCambiarPin() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-sheet">
+      <div class="row-between" style="margin-bottom:14px;">
+        <h2 style="margin:0;">Cambiar PIN</h2>
+        <button class="icon-btn" id="modal-close" aria-label="Cerrar"><i class="ti ti-x" aria-hidden="true"></i></button>
+      </div>
+      <div class="field">
+        <label>PIN actual</label>
+        <input type="tel" inputmode="numeric" pattern="[0-9]*" id="pin-actual" maxlength="6" style="font-size:20px;text-align:center;letter-spacing:6px;" />
+      </div>
+      <div class="field">
+        <label>PIN nuevo</label>
+        <input type="tel" inputmode="numeric" pattern="[0-9]*" id="pin-nuevo3" maxlength="6" style="font-size:20px;text-align:center;letter-spacing:6px;" />
+      </div>
+      <p class="muted" id="cambiar-pin-error" style="display:none;color:var(--danger-text);margin-bottom:8px;"></p>
+      <button class="primary" id="btn-guardar-pin-cambio" style="width:100%;">Guardar</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#btn-guardar-pin-cambio').addEventListener('click', async () => {
+    const actual = overlay.querySelector('#pin-actual').value.trim();
+    const nuevo = overlay.querySelector('#pin-nuevo3').value.trim();
+    const errorEl = overlay.querySelector('#cambiar-pin-error');
+    if (!security.pinTieneFormatoValido(nuevo)) {
+      errorEl.textContent = 'El PIN nuevo debe tener entre 4 y 6 números.';
+      errorEl.style.display = 'block';
+      return;
+    }
+    const config = await loadSecurityConfig();
+    const llave = await security.desenvolverLlave(config.envueltaPin, actual);
+    if (!llave) {
+      errorEl.textContent = 'El PIN actual no es correcto.';
+      errorEl.style.display = 'block';
+      return;
+    }
+    config.envueltaPin = await security.envolverLlave(llave, nuevo);
+    await saveSecurityConfig(config);
+    overlay.remove();
+  });
+}
+
+async function activarFaceIdDesdeAjustes() {
+  const disponible = await security.biometriaDisponible();
+  if (!disponible) {
+    alert('Face ID / Touch ID no está disponible en este dispositivo o navegador.');
+    return;
+  }
+  const config = await loadSecurityConfig();
+  const pin = prompt('Escribe tu PIN para activar Face ID / Touch ID');
+  if (!pin) return;
+  const llave = await security.desenvolverLlave(config.envueltaPin, pin);
+  if (!llave) { alert('PIN incorrecto.'); return; }
+
+  const credId = await security.registrarBiometria('konta-usuario');
+  if (!credId) return;
+  const deviceKey = await security.generarLlaveMaestra();
+  const rawDeviceKey = await crypto.subtle.exportKey('raw', deviceKey);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const wrapped = await crypto.subtle.wrapKey('raw', llave, deviceKey, { name: 'AES-GCM', iv });
+  config.biometria = {
+    credentialId: credId,
+    deviceKeyRaw: btoa(String.fromCharCode(...new Uint8Array(rawDeviceKey))),
+    iv: btoa(String.fromCharCode(...iv)),
+    wrapped: btoa(String.fromCharCode(...new Uint8Array(wrapped))),
+  };
+  await saveSecurityConfig(config);
+  await actualizarCacheSeguridad();
+  render();
+}
+
+// ---------- Seguridad: configuración inicial, bloqueo y desbloqueo ----------
+
+let minutosParaBloqueo = 5;
+let momentoOcultado = null;
+let appBloqueada = false;
+let securityConfigCache = null; // copia en memoria para poder leerla sin await en render()
+
+function screenShell(contenidoHtml) {
+  app.innerHTML = `<div class="screen" style="padding-top:15vh;">${contenidoHtml}</div>`;
+}
+
+// --- Asistente de configuración (primera vez) ---
+
+function asistenteSeguridad(onTerminado) {
+  let paso = 'intro';
+  let pinTemp = '';
+  let fraseTemp = '';
+  let masterKeyTemp = null;
+
+  function render() {
+    if (paso === 'intro') {
+      screenShell(`
+        <div class="card">
+          <h1 style="margin-top:0;">Protege tu información</h1>
+          <p class="muted" style="margin-bottom:16px;">Vamos a pedirte un PIN para abrir la app, y tus datos van a quedar cifrados en este dispositivo — así, si alguien más tiene tu teléfono, no puede ver tu información financiera.</p>
+          <button class="primary" id="btn-continuar" style="width:100%;margin-bottom:8px;">Configurar ahora</button>
+          <button id="btn-omitir" style="width:100%;">Omitir por ahora</button>
+        </div>
+      `);
+      document.getElementById('btn-continuar').addEventListener('click', () => { paso = 'crear-pin'; render(); });
+      document.getElementById('btn-omitir').addEventListener('click', () => onTerminado(false));
+    }
+
+    else if (paso === 'crear-pin') {
+      screenShell(`
+        <div class="card">
+          <h1 style="margin-top:0;">Crea tu PIN</h1>
+          <p class="muted" style="margin-bottom:16px;">Entre 4 y 6 números. Tienes que recordarlo — es la llave de tus datos.</p>
+          <div class="field">
+            <input type="tel" inputmode="numeric" pattern="[0-9]*" id="pin-nuevo" placeholder="••••" maxlength="6" style="font-size:24px;text-align:center;letter-spacing:8px;" />
+          </div>
+          <p class="muted" id="pin-error" style="display:none;color:var(--danger-text);margin-bottom:12px;">El PIN debe tener entre 4 y 6 números.</p>
+          <button class="primary" id="btn-siguiente" style="width:100%;">Siguiente</button>
+        </div>
+      `);
+      const input = document.getElementById('pin-nuevo');
+      input.focus();
+      document.getElementById('btn-siguiente').addEventListener('click', () => {
+        const valor = input.value.trim();
+        if (!security.pinTieneFormatoValido(valor)) {
+          document.getElementById('pin-error').style.display = 'block';
+          return;
+        }
+        pinTemp = valor;
+        paso = 'confirmar-pin';
+        render();
+      });
+    }
+
+    else if (paso === 'confirmar-pin') {
+      screenShell(`
+        <div class="card">
+          <h1 style="margin-top:0;">Confírmalo</h1>
+          <p class="muted" style="margin-bottom:16px;">Escribe el mismo PIN otra vez.</p>
+          <div class="field">
+            <input type="tel" inputmode="numeric" pattern="[0-9]*" id="pin-confirmar" placeholder="••••" maxlength="6" style="font-size:24px;text-align:center;letter-spacing:8px;" />
+          </div>
+          <p class="muted" id="pin-error" style="display:none;color:var(--danger-text);margin-bottom:12px;">No coincide. Intenta otra vez.</p>
+          <button class="primary" id="btn-siguiente" style="width:100%;">Siguiente</button>
+        </div>
+      `);
+      const input = document.getElementById('pin-confirmar');
+      input.focus();
+      document.getElementById('btn-siguiente').addEventListener('click', () => {
+        if (input.value.trim() !== pinTemp) {
+          document.getElementById('pin-error').style.display = 'block';
+          return;
+        }
+        fraseTemp = security.generarFraseRecuperacion();
+        paso = 'frase-recuperacion';
+        render();
+      });
+    }
+
+    else if (paso === 'frase-recuperacion') {
+      screenShell(`
+        <div class="card">
+          <h1 style="margin-top:0;">Tu frase de recuperación</h1>
+          <p class="muted" style="margin-bottom:16px;">Si algún día olvidas tu PIN, esta es la única forma de recuperar tus datos. Anótala en un lugar seguro — no la guardamos en ningún servidor, así que si la pierdes junto con el PIN, no hay forma de recuperar tu información.</p>
+          <div class="metric-card" style="text-align:center;margin-bottom:16px;">
+            <p style="font-family:monospace;font-size:18px;font-weight:600;letter-spacing:1px;margin:0;">${fraseTemp}</p>
+          </div>
+          <div class="field" style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="check-guardada" style="width:auto;height:auto;" />
+            <label for="check-guardada" style="margin:0;font-size:13px;">Ya la anoté en un lugar seguro</label>
+          </div>
+          <button class="primary" id="btn-siguiente" style="width:100%;margin-top:12px;" disabled>Siguiente</button>
+        </div>
+      `);
+      const check = document.getElementById('check-guardada');
+      const btn = document.getElementById('btn-siguiente');
+      check.addEventListener('change', () => { btn.disabled = !check.checked; });
+      btn.addEventListener('click', async () => {
+        paso = 'guardando';
+        render();
+        masterKeyTemp = await security.generarLlaveMaestra();
+        const envueltaPin = await security.envolverLlave(masterKeyTemp, pinTemp);
+        const envueltaFrase = await security.envolverLlave(masterKeyTemp, fraseTemp);
+        await saveSecurityConfig({ envueltaPin, envueltaFrase, biometria: null, timeoutMin: 5 });
+        establecerLlaveMaestra(masterKeyTemp);
+        await persistInmediato();
+        const disponibleBiometria = await security.biometriaDisponible();
+        paso = disponibleBiometria ? 'face-id' : 'listo';
+        render();
+      });
+    }
+
+    else if (paso === 'guardando') {
+      screenShell(`<p class="muted" style="text-align:center;">Cifrando tus datos…</p>`);
+    }
+
+    else if (paso === 'face-id') {
+      screenShell(`
+        <div class="card">
+          <h1 style="margin-top:0;">¿Desbloqueo rápido?</h1>
+          <p class="muted" style="margin-bottom:16px;">Puedes usar Face ID o Touch ID para no escribir el PIN cada vez. Tu PIN sigue siendo la protección real de tus datos — esto es solo un atajo.</p>
+          <button class="primary" id="btn-activar-faceid" style="width:100%;margin-bottom:8px;">Activar Face ID / Touch ID</button>
+          <button id="btn-saltar-faceid" style="width:100%;">Prefiero solo el PIN</button>
+        </div>
+      `);
+      document.getElementById('btn-activar-faceid').addEventListener('click', async () => {
+        const credId = await security.registrarBiometria('konta-usuario');
+        if (credId) {
+          const deviceKey = await security.generarLlaveMaestra();
+          const rawDeviceKey = await crypto.subtle.exportKey('raw', deviceKey);
+          const iv = crypto.getRandomValues(new Uint8Array(12));
+          const wrapped = await crypto.subtle.wrapKey('raw', masterKeyTemp, deviceKey, { name: 'AES-GCM', iv });
+          const config = await loadSecurityConfig();
+          config.biometria = {
+            credentialId: credId,
+            deviceKeyRaw: btoa(String.fromCharCode(...new Uint8Array(rawDeviceKey))),
+            iv: btoa(String.fromCharCode(...iv)),
+            wrapped: btoa(String.fromCharCode(...new Uint8Array(wrapped))),
+          };
+          await saveSecurityConfig(config);
+        }
+        paso = 'listo';
+        render();
+      });
+      document.getElementById('btn-saltar-faceid').addEventListener('click', () => { paso = 'listo'; render(); });
+    }
+
+    else if (paso === 'listo') {
+      screenShell(`
+        <div class="card" style="text-align:center;">
+          <i class="ti ti-shield-check" style="font-size:40px;color:var(--success-text);" aria-hidden="true"></i>
+          <h1>Listo</h1>
+          <p class="muted" style="margin-bottom:16px;">Tus datos ya están protegidos.</p>
+          <button class="primary" id="btn-empezar" style="width:100%;">Empezar a usar Konta</button>
+        </div>
+      `);
+      document.getElementById('btn-empezar').addEventListener('click', () => onTerminado(true));
+    }
+  }
+
+  render();
+}
+
+// --- Pantalla de bloqueo (cada vez que se abre o vuelve del segundo plano) ---
+
+function pantallaBloqueo(onDesbloqueado) {
+  let modo = 'pin';
+
+  async function intentarBiometria(config) {
+    if (!config.biometria) return;
+    const ok = await security.verificarBiometria(config.biometria.credentialId);
+    if (!ok) return;
+    try {
+      const rawDeviceKey = fromBase64Local(config.biometria.deviceKeyRaw);
+      const deviceKey = await crypto.subtle.importKey('raw', rawDeviceKey, 'AES-GCM', false, ['unwrapKey']);
+      const iv = fromBase64Local(config.biometria.iv);
+      const wrapped = fromBase64Local(config.biometria.wrapped);
+      const masterKey = await crypto.subtle.unwrapKey(
+        'raw', wrapped, deviceKey, { name: 'AES-GCM', iv },
+        { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']
+      );
+      onDesbloqueado(masterKey);
+    } catch (e) { /* seguimos mostrando el PIN */ }
+  }
+
+  function fromBase64Local(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  async function render() {
+    const config = await loadSecurityConfig();
+
+    if (modo === 'pin') {
+      screenShell(`
+        <div class="card" style="text-align:center;">
+          <i class="ti ti-lock" style="font-size:32px;color:var(--text-secondary);" aria-hidden="true"></i>
+          <h1>Konta está bloqueada</h1>
+          <div class="field">
+            <input type="tel" inputmode="numeric" pattern="[0-9]*" id="pin-desbloqueo" placeholder="PIN" maxlength="6" style="font-size:24px;text-align:center;letter-spacing:8px;" />
+          </div>
+          <p class="muted" id="pin-desbloqueo-error" style="display:none;color:var(--danger-text);margin-bottom:8px;">PIN incorrecto.</p>
+          <button class="primary" id="btn-desbloquear" style="width:100%;margin-bottom:10px;">Desbloquear</button>
+          ${config.biometria ? '<button id="btn-usar-biometria" style="width:100%;margin-bottom:10px;"><i class="ti ti-face-id" aria-hidden="true"></i> Usar Face ID / Touch ID</button>' : ''}
+          <button id="btn-olvide-pin" style="width:100%;border:none;background:none;color:var(--text-secondary);font-size:12px;">¿Olvidaste tu PIN?</button>
+        </div>
+      `);
+      const input = document.getElementById('pin-desbloqueo');
+      input.focus();
+
+      async function intentarPin() {
+        const pin = input.value.trim();
+        const llave = await security.desenvolverLlave(config.envueltaPin, pin);
+        if (!llave) {
+          document.getElementById('pin-desbloqueo-error').style.display = 'block';
+          input.value = '';
+          input.focus();
+          return;
+        }
+        onDesbloqueado(llave);
+      }
+      document.getElementById('btn-desbloquear').addEventListener('click', intentarPin);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') intentarPin(); });
+      const btnBio = document.getElementById('btn-usar-biometria');
+      if (btnBio) btnBio.addEventListener('click', () => intentarBiometria(config));
+      document.getElementById('btn-olvide-pin').addEventListener('click', () => { modo = 'recuperar'; render(); });
+
+      if (config.biometria) intentarBiometria(config);
+    }
+
+    else if (modo === 'recuperar') {
+      screenShell(`
+        <div class="card">
+          <h1 style="margin-top:0;">Recuperar acceso</h1>
+          <p class="muted" style="margin-bottom:16px;">Escribe tu frase de recuperación exactamente como la guardaste.</p>
+          <div class="field">
+            <input type="text" id="frase-recuperacion" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" style="text-transform:uppercase;" />
+          </div>
+          <p class="muted" id="frase-error" style="display:none;color:var(--danger-text);margin-bottom:8px;">Esa frase no es correcta.</p>
+          <button class="primary" id="btn-verificar-frase" style="width:100%;margin-bottom:10px;">Verificar</button>
+          <button id="btn-volver-pin" style="width:100%;">Volver a intentar con el PIN</button>
+        </div>
+      `);
+      document.getElementById('btn-volver-pin').addEventListener('click', () => { modo = 'pin'; render(); });
+      document.getElementById('btn-verificar-frase').addEventListener('click', async () => {
+        const frase = document.getElementById('frase-recuperacion').value.trim().toUpperCase();
+        const llave = await security.desenvolverLlave(config.envueltaFrase, frase);
+        if (!llave) {
+          document.getElementById('frase-error').style.display = 'block';
+          return;
+        }
+        modo = 'nuevo-pin';
+        window.__llaveRecuperada = llave;
+        render();
+      });
+    }
+
+    else if (modo === 'nuevo-pin') {
+      screenShell(`
+        <div class="card">
+          <h1 style="margin-top:0;">Crea un nuevo PIN</h1>
+          <div class="field">
+            <input type="tel" inputmode="numeric" pattern="[0-9]*" id="pin-nuevo2" placeholder="••••" maxlength="6" style="font-size:24px;text-align:center;letter-spacing:8px;" />
+          </div>
+          <button class="primary" id="btn-guardar-pin-nuevo" style="width:100%;">Guardar y continuar</button>
+        </div>
+      `);
+      document.getElementById('btn-guardar-pin-nuevo').addEventListener('click', async () => {
+        const nuevo = document.getElementById('pin-nuevo2').value.trim();
+        if (!security.pinTieneFormatoValido(nuevo)) return;
+        const llave = window.__llaveRecuperada;
+        const envueltaPin = await security.envolverLlave(llave, nuevo);
+        const config2 = await loadSecurityConfig();
+        config2.envueltaPin = envueltaPin;
+        await saveSecurityConfig(config2);
+        delete window.__llaveRecuperada;
+        onDesbloqueado(llave);
+      });
+    }
+  }
+
+  render();
+}
+
+let autoBloqueoActivo = false;
+
+function activarAutoBloqueo() {
+  if (autoBloqueoActivo) return;
+  autoBloqueoActivo = true;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      momentoOcultado = Date.now();
+    } else if (momentoOcultado && tieneLlaveMaestra()) {
+      const minutos = (Date.now() - momentoOcultado) / 60000;
+      if (minutos >= minutosParaBloqueo) {
+        bloquearApp();
+      }
+    }
+  });
+}
+
+function bloquearApp() {
+  if (appBloqueada) return;
+  appBloqueada = true;
+  pantallaBloqueo((llave) => {
+    establecerLlaveMaestra(llave);
+    appBloqueada = false;
+    render();
+  });
 }
 
 // ---------- Bootstrap ----------
@@ -1526,9 +1989,37 @@ function renderWithScreenEvents() {
 
 async function boot() {
   app.innerHTML = '<div class="screen"><p class="muted" style="text-align:center;margin-top:40vh;">Cargando tus datos…</p></div>';
-  await initDatabase();
   render = renderWithScreenEvents;
-  render();
+
+  const estado = await prepararArranque();
+
+  if (estado.tieneSeguridad) {
+    securityConfigCache = estado.securityConfig;
+    minutosParaBloqueo = Number(estado.securityConfig.timeoutMin) || 5;
+    pantallaBloqueo(async (llave) => {
+      const bytesPlanos = estado.bytesGuardados ? await descifrarBytes(llave, estado.bytesGuardados) : null;
+      await abrirBaseDatos(bytesPlanos);
+      establecerLlaveMaestra(llave);
+      render();
+      activarAutoBloqueo();
+    });
+  } else {
+    await abrirBaseDatos(estado.bytesGuardados);
+    const yaOmitido = getConfig('seguridad_omitida') === '1';
+    if (yaOmitido) {
+      render();
+    } else {
+      asistenteSeguridad(async (configurado) => {
+        if (!configurado) {
+          setConfig('seguridad_omitida', '1');
+        } else {
+          await actualizarCacheSeguridad();
+          activarAutoBloqueo();
+        }
+        render();
+      });
+    }
+  }
 }
 
 boot();

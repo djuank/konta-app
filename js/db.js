@@ -4,29 +4,65 @@
 // Ningún cálculo de negocio vive aquí — eso está en domain.js.
 
 import { SCHEMA_SQL, CONFIG_DEFAULT, CATEGORIAS_SEED, CUENTAS_SEED, PAGOS_FIJOS_SEED, INGRESOS_FIJOS_SEED } from './schema.js';
-import { loadSavedBytes, saveBytes } from './storage.js';
+import { loadSavedBytes, saveBytes, loadSecurityConfig } from './storage.js';
+import { cifrarBytes, descifrarBytes } from './security.js';
 
 let SQL = null;
 let db = null;
 let saveTimeout = null;
+let masterKey = null; // en memoria solo mientras la app está abierta y desbloqueada
 
-export async function initDatabase() {
-  SQL = await initSqlJs({ locateFile: (file) => `vendor/${file}` });
+async function inicializarSQL() {
+  if (!SQL) SQL = await initSqlJs({ locateFile: (file) => `vendor/${file}` });
+  return SQL;
+}
 
-  const savedBytes = await loadSavedBytes();
-  if (savedBytes) {
-    db = new SQL.Database(savedBytes);
+// Primer paso del arranque: mira si hay seguridad configurada y trae los
+// bytes guardados (todavía cifrados si aplica) SIN crear la base de datos.
+// app.js usa esto para decidir si mostrar la pantalla de bloqueo antes
+// de abrir nada.
+export async function prepararArranque() {
+  await inicializarSQL();
+  const securityConfig = await loadSecurityConfig();
+  const bytesGuardados = await loadSavedBytes();
+  return { tieneSeguridad: !!securityConfig, securityConfig, bytesGuardados };
+}
+
+// Segundo paso: ya con los bytes en claro (si había cifrado, ya
+// desenvueltos), arma la base de datos real y corre migraciones.
+export async function abrirBaseDatos(bytesPlanos) {
+  if (bytesPlanos) {
+    db = new SQL.Database(bytesPlanos);
   } else {
     db = new SQL.Database();
     db.run(SCHEMA_SQL);
     seedInitialData();
-    persist();
   }
-  // Por si el archivo cargado viene de una versión anterior sin alguna tabla nueva.
   db.run(SCHEMA_SQL);
   ensureConfigDefaults();
   ensureColumnasNuevas();
+  persist();
   return db;
+}
+
+export function establecerLlaveMaestra(llave) {
+  masterKey = llave;
+}
+
+export function tieneLlaveMaestra() {
+  return !!masterKey;
+}
+
+export function olvidarLlaveMaestra() {
+  masterKey = null;
+}
+
+// Desactiva el cifrado: guarda los datos actuales en claro y olvida la
+// llave maestra. Se usa cuando el usuario decide apagar la seguridad.
+export async function desactivarCifradoYGuardarPlano() {
+  const bytes = db.export();
+  await saveBytes(bytes);
+  masterKey = null;
 }
 
 // Migraciones ligeras: agrega columnas nuevas a bases de datos creadas
@@ -114,12 +150,31 @@ function ensureConfigDefaults() {
 }
 
 // Guarda en IndexedDB con un pequeño debounce para no escribir en cada tecla.
+// Si hay una llave maestra activa, cifra los bytes antes de guardarlos.
 export function persist() {
   clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(() => {
+  saveTimeout = setTimeout(async () => {
     const bytes = db.export();
-    saveBytes(bytes);
+    if (masterKey) {
+      const cifrado = await cifrarBytes(masterKey, bytes);
+      saveBytes(cifrado);
+    } else {
+      saveBytes(bytes);
+    }
   }, 300);
+}
+
+// Fuerza el guardado inmediato (sin debounce) — útil justo después de
+// activar el cifrado, para no dejar una ventana con datos sin proteger.
+export async function persistInmediato() {
+  clearTimeout(saveTimeout);
+  const bytes = db.export();
+  if (masterKey) {
+    const cifrado = await cifrarBytes(masterKey, bytes);
+    await saveBytes(cifrado);
+  } else {
+    await saveBytes(bytes);
+  }
 }
 
 export function getRawBytes() {
@@ -164,3 +219,5 @@ export function getConfig(clave) {
 export function setConfig(clave, valor) {
   run('INSERT INTO config (clave, valor) VALUES (?, ?) ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor', [clave, String(valor)]);
 }
+
+export { descifrarBytes };
