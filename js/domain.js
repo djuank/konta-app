@@ -214,8 +214,10 @@ export function categorias(tipo) {
 
 export function listaPagosFijos() {
   return queryAll(
-    `SELECT p.*, c.nombre AS categoria_nombre, c.icono
-     FROM pagos_fijos p LEFT JOIN categorias c ON c.id = p.categoria_id
+    `SELECT p.*, c.nombre AS categoria_nombre, c.icono, d.nombre AS deuda_nombre
+     FROM pagos_fijos p
+     LEFT JOIN categorias c ON c.id = p.categoria_id
+     LEFT JOIN lo_que_debo d ON d.id = p.deuda_id
      WHERE p.activo = 1 ORDER BY p.dia_esperado, p.nombre`
   );
 }
@@ -231,15 +233,15 @@ export function estadoPagosFijosMes() {
   });
 }
 
-export function agregarPagoFijo({ nombre, montoEsperado, categoriaId, diaEsperado }) {
-  run('INSERT INTO pagos_fijos (nombre, monto_esperado, categoria_id, dia_esperado) VALUES (?, ?, ?, ?)', [
-    nombre, montoEsperado || 0, categoriaId || null, diaEsperado || null,
+export function agregarPagoFijo({ nombre, montoEsperado, categoriaId, diaEsperado, deudaId }) {
+  run('INSERT INTO pagos_fijos (nombre, monto_esperado, categoria_id, dia_esperado, deuda_id) VALUES (?, ?, ?, ?, ?)', [
+    nombre, montoEsperado || 0, categoriaId || null, diaEsperado || null, deudaId || null,
   ]);
 }
 
-export function actualizarPagoFijo(id, { nombre, montoEsperado, categoriaId, diaEsperado }) {
-  run('UPDATE pagos_fijos SET nombre = ?, monto_esperado = ?, categoria_id = ?, dia_esperado = ? WHERE id = ?', [
-    nombre, montoEsperado || 0, categoriaId || null, diaEsperado || null, id,
+export function actualizarPagoFijo(id, { nombre, montoEsperado, categoriaId, diaEsperado, deudaId }) {
+  run('UPDATE pagos_fijos SET nombre = ?, monto_esperado = ?, categoria_id = ?, dia_esperado = ?, deuda_id = ? WHERE id = ?', [
+    nombre, montoEsperado || 0, categoriaId || null, diaEsperado || null, deudaId || null, id,
   ]);
 }
 
@@ -247,6 +249,8 @@ export function eliminarPagoFijo(id) {
   run('UPDATE pagos_fijos SET activo = 0 WHERE id = ?', [id]);
 }
 
+// Marcar un pago fijo como pagado. Si está vinculado a una deuda, el monto
+// pagado se descuenta automáticamente de esa deuda (sin bajar de $0).
 export function marcarPagoFijoPagado(pagoFijoId, { monto, cuentaId, fecha, nota }) {
   const pago = queryOne('SELECT * FROM pagos_fijos WHERE id = ?', [pagoFijoId]);
   if (!pago) return;
@@ -255,10 +259,33 @@ export function marcarPagoFijoPagado(pagoFijoId, { monto, cuentaId, fecha, nota 
     'INSERT INTO movimientos (fecha, cuenta_id, categoria_id, monto, tipo, nota, pago_fijo_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
     [fecha, cuentaId, categoriaId, monto, 'gasto', nota || null, pagoFijoId]
   );
+  if (pago.deuda_id) {
+    const deuda = queryOne('SELECT * FROM lo_que_debo WHERE id = ?', [pago.deuda_id]);
+    if (deuda) {
+      const nuevoSaldo = Math.max(0, deuda.valor - monto);
+      run('UPDATE lo_que_debo SET valor = ?, fecha_actualizacion = ? WHERE id = ?', [
+        nuevoSaldo, toISODate(hoy()), pago.deuda_id,
+      ]);
+    }
+  }
   guardarSnapshotPatrimonio();
 }
 
+// Deshacer un pago fijo: elimina el movimiento y, si estaba vinculado a una
+// deuda, le devuelve el monto que se había descontado.
 export function desmarcarPagoFijo(movimientoId) {
+  const mov = queryOne('SELECT * FROM movimientos WHERE id = ?', [movimientoId]);
+  if (mov && mov.pago_fijo_id) {
+    const pago = queryOne('SELECT * FROM pagos_fijos WHERE id = ?', [mov.pago_fijo_id]);
+    if (pago && pago.deuda_id) {
+      const deuda = queryOne('SELECT * FROM lo_que_debo WHERE id = ?', [pago.deuda_id]);
+      if (deuda) {
+        run('UPDATE lo_que_debo SET valor = ?, fecha_actualizacion = ? WHERE id = ?', [
+          deuda.valor + mov.monto, toISODate(hoy()), pago.deuda_id,
+        ]);
+      }
+    }
+  }
   run('DELETE FROM movimientos WHERE id = ?', [movimientoId]);
   guardarSnapshotPatrimonio();
 }

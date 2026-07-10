@@ -32,9 +32,14 @@ export async function initDatabase() {
 // Migraciones ligeras: agrega columnas nuevas a bases de datos creadas
 // con una versión anterior de la app, sin perder los datos existentes.
 function ensureColumnasNuevas() {
-  const columnas = queryAll("PRAGMA table_info(movimientos)").map((c) => c.name);
-  if (!columnas.includes('pago_fijo_id')) {
+  const columnasMov = queryAll("PRAGMA table_info(movimientos)").map((c) => c.name);
+  if (!columnasMov.includes('pago_fijo_id')) {
     db.run('ALTER TABLE movimientos ADD COLUMN pago_fijo_id INTEGER REFERENCES pagos_fijos(id)');
+    persist();
+  }
+  const columnasPF = queryAll("PRAGMA table_info(pagos_fijos)").map((c) => c.name);
+  if (!columnasPF.includes('deuda_id')) {
+    db.run('ALTER TABLE pagos_fijos ADD COLUMN deuda_id INTEGER REFERENCES lo_que_debo(id)');
     persist();
   }
 }

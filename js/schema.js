@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS pagos_fijos (
   monto_esperado REAL NOT NULL DEFAULT 0,
   categoria_id INTEGER REFERENCES categorias(id),
   dia_esperado INTEGER,
-  activo INTEGER NOT NULL DEFAULT 1
+  activo INTEGER NOT NULL DEFAULT 1,
+  deuda_id INTEGER REFERENCES lo_que_debo(id)
 );
 
 CREATE TABLE IF NOT EXISTS ingresos_fijos (

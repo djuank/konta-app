@@ -209,7 +209,7 @@ function screenInicio() {
     </div>
     <div class="card">
       ${pagosFijos.length === 0 ? emptyState('ti-calendar-due', 'No tienes pagos fijos registrados todavía') :
-        pagosFijos.map((p) => pagoFijoRow(p)).join('')}
+        renderPagosFijosAgrupados(pagosFijos)}
     </div>
 
     <h2>Últimos movimientos</h2>
@@ -220,6 +220,45 @@ function screenInicio() {
   `;
 }
 
+function agruparPorCategoria(lista) {
+  const grupos = {};
+  for (const item of lista) {
+    const clave = item.categoria_nombre || 'Sin categoría';
+    if (!grupos[clave]) grupos[clave] = [];
+    grupos[clave].push(item);
+  }
+  return grupos;
+}
+
+function renderPagosFijosAgrupados(pagosFijos) {
+  const grupos = agruparPorCategoria(pagosFijos);
+  const nombres = Object.keys(grupos);
+  return nombres.map((nombreGrupo, idx) => `
+    ${idx > 0 ? '<div style="height:14px;"></div>' : ''}
+    <p class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.03em;margin:0 0 4px;">${nombreGrupo}</p>
+    ${grupos[nombreGrupo].map((p) => pagoFijoRow(p)).join('')}
+  `).join('');
+}
+
+function renderPagosFijosAjustesAgrupados(pagosFijos) {
+  const grupos = agruparPorCategoria(pagosFijos);
+  const nombres = Object.keys(grupos);
+  return nombres.map((nombreGrupo, idx) => `
+    ${idx > 0 ? '<div style="height:14px;"></div>' : ''}
+    <p class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.03em;margin:0 0 4px;">${nombreGrupo}</p>
+    ${grupos[nombreGrupo].map((p) => `
+      <div class="list-item">
+        <div class="icon-badge neutral"><i class="ti ${p.icono || 'ti-calendar-due'}" aria-hidden="true"></i></div>
+        <div style="flex:1;">
+          <p style="font-size:13px;margin:0;">${p.nombre}</p>
+          <p class="muted" style="margin:0;">${fmt(p.monto_esperado)}${p.dia_esperado ? ' · día ' + p.dia_esperado : ''}${p.deuda_nombre ? ' · abona a ' + p.deuda_nombre : ''}</p>
+        </div>
+        <button class="icon-btn" data-edit-pago-fijo="${p.id}" aria-label="Editar"><i class="ti ti-pencil" aria-hidden="true"></i></button>
+      </div>
+    `).join('')}
+  `).join('');
+}
+
 function pagoFijoRow(p) {
   return `
     <div class="list-item" data-pago-fijo-row="${p.id}" style="cursor:pointer;">
@@ -227,7 +266,7 @@ function pagoFijoRow(p) {
         <i class="ti ${p.pagado ? 'ti-check' : 'ti-clock'}" aria-hidden="true"></i>
       </div>
       <div style="flex:1;">
-        <p style="font-size:13px;margin:0;">${p.nombre}</p>
+        <p style="font-size:13px;margin:0;">${p.nombre}${p.deuda_nombre ? ` <span class="muted" style="font-size:11px;">· abona a ${p.deuda_nombre}</span>` : ''}</p>
         <p class="muted" style="margin:0;">${p.pagado ? 'Pagado este mes' : (p.dia_esperado ? `Vence cerca del día ${p.dia_esperado}` : 'Pendiente este mes')}</p>
       </div>
       <span style="font-size:13px;font-weight:500;" class="${p.pagado ? 'pos' : ''}">${fmt(p.pagado ? p.movimiento.monto : p.monto_esperado)}</span>
@@ -503,6 +542,7 @@ function openModalIngresoFijo(ingresoExistente) {
 function openModalPagoFijo(pagoExistente) {
   const esEdicion = !!pagoExistente;
   const catGasto = domain.categorias('gasto');
+  const deudas = domain.listaDeudas();
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
@@ -529,6 +569,14 @@ function openModalPagoFijo(pagoExistente) {
         <label>Día aproximado del mes (opcional)</label>
         <input type="number" id="pf-dia" min="1" max="31" placeholder="Ej: 5" value="${esEdicion && pagoExistente.dia_esperado ? pagoExistente.dia_esperado : ''}" />
       </div>
+      <div class="field">
+        <label>¿Es el pago de una deuda?</label>
+        <select id="pf-deuda">
+          <option value="">No, es un gasto normal</option>
+          ${deudas.map((d) => `<option value="${d.id}" ${esEdicion && pagoExistente.deuda_id === d.id ? 'selected' : ''}>${d.nombre} (debes ${fmt(d.valor)})</option>`).join('')}
+        </select>
+        <p class="muted" style="margin:4px 0 0;">Si la vinculas, cada vez que marques este pago como hecho, se descuenta automáticamente de esa deuda.</p>
+      </div>
       <button class="primary" id="pf-def-guardar" style="width:100%;margin-bottom:8px;">Guardar</button>
       ${esEdicion ? '<button id="pf-def-eliminar" style="width:100%;color:var(--danger-text);">Eliminar pago fijo</button>' : ''}
     </div>
@@ -542,10 +590,12 @@ function openModalPagoFijo(pagoExistente) {
     const montoEsperado = Number(overlay.querySelector('#pf-monto-esperado').value) || 0;
     const categoriaId = Number(overlay.querySelector('#pf-categoria').value);
     const diaEsperado = Number(overlay.querySelector('#pf-dia').value) || null;
+    const deudaValue = overlay.querySelector('#pf-deuda').value;
+    const deudaId = deudaValue ? Number(deudaValue) : null;
     if (esEdicion) {
-      domain.actualizarPagoFijo(pagoExistente.id, { nombre, montoEsperado, categoriaId, diaEsperado });
+      domain.actualizarPagoFijo(pagoExistente.id, { nombre, montoEsperado, categoriaId, diaEsperado, deudaId });
     } else {
-      domain.agregarPagoFijo({ nombre, montoEsperado, categoriaId, diaEsperado });
+      domain.agregarPagoFijo({ nombre, montoEsperado, categoriaId, diaEsperado, deudaId });
     }
     overlay.remove();
     render();
@@ -1184,16 +1234,7 @@ function screenConfiguracion() {
     </div>
     <div class="card">
       ${pagosFijos.length === 0 ? emptyState('ti-calendar-due', 'No has definido pagos fijos todavía') :
-        pagosFijos.map((p) => `
-          <div class="list-item">
-            <div class="icon-badge neutral"><i class="ti ${p.icono || 'ti-calendar-due'}" aria-hidden="true"></i></div>
-            <div style="flex:1;">
-              <p style="font-size:13px;margin:0;">${p.nombre}</p>
-              <p class="muted" style="margin:0;">${fmt(p.monto_esperado)}${p.dia_esperado ? ' · día ' + p.dia_esperado : ''}</p>
-            </div>
-            <button class="icon-btn" data-edit-pago-fijo="${p.id}" aria-label="Editar"><i class="ti ti-pencil" aria-hidden="true"></i></button>
-          </div>
-        `).join('')}
+        renderPagosFijosAjustesAgrupados(pagosFijos)}
     </div>
 
     <h2>Respaldo de tus datos</h2>
