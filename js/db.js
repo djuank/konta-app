@@ -51,6 +51,33 @@ function ensureColumnasNuevas() {
     db.run('ALTER TABLE ingresos_fijos ADD COLUMN categoria_id INTEGER REFERENCES categorias(id)');
     persist();
   }
+  corregirCategoriasFaltantes();
+}
+
+// Repara pagos/ingresos fijos que hayan quedado sin categoría asignada
+// (por ejemplo, los que se crearon antes de que existiera ese campo).
+// Es segura de ejecutar siempre: solo toca filas con categoria_id vacío.
+function corregirCategoriasFaltantes() {
+  const pagosSinCategoria = queryAll('SELECT * FROM pagos_fijos WHERE categoria_id IS NULL');
+  for (const p of pagosSinCategoria) {
+    const categoriaId = buscarCategoriaId(p.nombre) || buscarCategoriaId('Otros gastos');
+    if (categoriaId) {
+      db.run('UPDATE pagos_fijos SET categoria_id = ? WHERE id = ?', [categoriaId, p.id]);
+    }
+  }
+  const ingresosSinCategoria = queryAll('SELECT * FROM ingresos_fijos WHERE categoria_id IS NULL');
+  for (const i of ingresosSinCategoria) {
+    const categoriaId = buscarCategoriaId(i.nombre) || buscarCategoriaId('Otros ingresos');
+    if (categoriaId) {
+      db.run('UPDATE ingresos_fijos SET categoria_id = ? WHERE id = ?', [categoriaId, i.id]);
+    }
+  }
+  if (pagosSinCategoria.length || ingresosSinCategoria.length) persist();
+}
+
+function buscarCategoriaId(nombre) {
+  const row = queryOne('SELECT id FROM categorias WHERE nombre = ?', [nombre]);
+  return row ? row.id : null;
 }
 
 function seedInitialData() {
@@ -66,13 +93,15 @@ function seedInitialData() {
     db.run('INSERT INTO config (clave, valor) VALUES (?, ?)', [clave, valor]);
   }
   for (const p of PAGOS_FIJOS_SEED) {
-    db.run('INSERT INTO pagos_fijos (nombre, monto_esperado, dia_esperado) VALUES (?, ?, ?)', [
-      p.nombre, p.monto_esperado, p.dia_esperado,
+    const categoriaId = buscarCategoriaId('Otros gastos');
+    db.run('INSERT INTO pagos_fijos (nombre, monto_esperado, categoria_id, dia_esperado) VALUES (?, ?, ?, ?)', [
+      p.nombre, p.monto_esperado, categoriaId, p.dia_esperado,
     ]);
   }
   for (const i of INGRESOS_FIJOS_SEED) {
-    db.run('INSERT INTO ingresos_fijos (nombre, monto_esperado, dia_esperado) VALUES (?, ?, ?)', [
-      i.nombre, i.monto_esperado, i.dia_esperado,
+    const categoriaId = buscarCategoriaId(i.nombre) || buscarCategoriaId('Otros ingresos');
+    db.run('INSERT INTO ingresos_fijos (nombre, monto_esperado, categoria_id, dia_esperado) VALUES (?, ?, ?, ?)', [
+      i.nombre, i.monto_esperado, categoriaId, i.dia_esperado,
     ]);
   }
 }

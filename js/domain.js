@@ -279,7 +279,9 @@ export function eliminarPagoFijo(id) {
 export function marcarPagoFijoPagado(pagoFijoId, { monto, cuentaId, fecha, nota }) {
   const pago = queryOne('SELECT * FROM pagos_fijos WHERE id = ?', [pagoFijoId]);
   if (!pago) return;
-  const categoriaId = pago.categoria_id || categorias('gasto')[0]?.id;
+  const categoriaId = pago.categoria_id
+    || categorias('gasto').find((c) => c.nombre === 'Otros gastos')?.id
+    || categorias('gasto')[0]?.id;
   run(
     'INSERT INTO movimientos (fecha, cuenta_id, categoria_id, monto, tipo, nota, pago_fijo_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
     [fecha, cuentaId, categoriaId, monto, 'gasto', nota || null, pagoFijoId]
@@ -360,7 +362,9 @@ export function eliminarIngresoFijo(id) {
 export function marcarIngresoFijoRecibido(ingresoFijoId, { monto, cuentaId, fecha, nota }) {
   const ingreso = queryOne('SELECT * FROM ingresos_fijos WHERE id = ?', [ingresoFijoId]);
   if (!ingreso) return;
-  const categoriaId = ingreso.categoria_id || categorias('ingreso')[0]?.id;
+  const categoriaId = ingreso.categoria_id
+    || categorias('ingreso').find((c) => c.nombre === 'Otros ingresos')?.id
+    || categorias('ingreso')[0]?.id;
   run(
     'INSERT INTO movimientos (fecha, cuenta_id, categoria_id, monto, tipo, nota, ingreso_fijo_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
     [fecha, cuentaId, categoriaId, monto, 'ingreso', nota || null, ingresoFijoId]
