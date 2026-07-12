@@ -37,6 +37,16 @@ CREATE TABLE IF NOT EXISTS ingresos_fijos (
   activo INTEGER NOT NULL DEFAULT 1
 );
 
+-- Pagos fijos que el usuario decidió omitir en un mes específico
+-- (por ejemplo, "este mes no compré mercado"). El pago fijo sigue
+-- existiendo y vuelve a aparecer como pendiente el mes siguiente.
+CREATE TABLE IF NOT EXISTS pagos_fijos_omitidos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pago_fijo_id INTEGER NOT NULL REFERENCES pagos_fijos(id),
+  mes TEXT NOT NULL,
+  UNIQUE(pago_fijo_id, mes)
+);
+
 CREATE TABLE IF NOT EXISTS movimientos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   fecha TEXT NOT NULL,
@@ -75,7 +85,18 @@ CREATE TABLE IF NOT EXISTS inversiones (
   nombre TEXT NOT NULL,
   tipo TEXT NOT NULL,
   valor_invertido REAL NOT NULL DEFAULT 0,
-  valor_actual REAL NOT NULL DEFAULT 0
+  valor_actual REAL NOT NULL DEFAULT 0,
+  usa_precio_unidad INTEGER NOT NULL DEFAULT 0,
+  precio_actual_unidad REAL NOT NULL DEFAULT 0
+);
+
+-- Historial de compras (DCA) de una inversión: BTC, otra cripto, acciones, etc.
+CREATE TABLE IF NOT EXISTS inversiones_compras (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  inversion_id INTEGER NOT NULL REFERENCES inversiones(id),
+  fecha TEXT NOT NULL,
+  monto_invertido REAL NOT NULL,
+  cantidad REAL
 );
 
 CREATE TABLE IF NOT EXISTS patrimonio_historico (

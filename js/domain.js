@@ -4,7 +4,7 @@
 // Esto es lo que permite que mañana cambie la UI o el motor de datos
 // sin tener que volver a escribir "cómo se calcula el patrimonio".
 
-import { queryAll, queryOne, getConfig, setConfig, run } from './db.js';
+import { queryAll, queryOne, getConfig, setConfig, run, runYObtenerId } from './db.js';
 
 const hoy = () => new Date();
 
@@ -100,10 +100,11 @@ export function listaDeudas() {
 }
 
 export function agregarDeuda({ nombre, valor }) {
-  run('INSERT INTO lo_que_debo (nombre, valor, fecha_actualizacion) VALUES (?, ?, ?)', [
+  const id = runYObtenerId('INSERT INTO lo_que_debo (nombre, valor, fecha_actualizacion) VALUES (?, ?, ?)', [
     nombre, valor, toISODate(hoy()),
   ]);
   guardarSnapshotPatrimonio();
+  return id;
 }
 
 export function actualizarDeuda(id, { nombre, valor }) {
@@ -236,16 +237,24 @@ export function listaPagosFijos() {
   );
 }
 
+function mesActualISO() {
+  const hoy = new Date();
+  return `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+}
+
 export function estadoPagosFijosMes() {
   const pagos = listaPagosFijos();
+  const mes = mesActualISO();
   return pagos.map((p) => {
     const pagosDelMes = queryAll(
       `SELECT * FROM movimientos WHERE pago_fijo_id = ? AND date(fecha) >= date('now','start of month') ORDER BY fecha DESC`,
       [p.id]
     );
     const totalPagado = pagosDelMes.reduce((sum, m) => sum + m.monto, 0);
+    const omitido = !!queryOne('SELECT 1 FROM pagos_fijos_omitidos WHERE pago_fijo_id = ? AND mes = ?', [p.id, mes]);
     let estado = 'pendiente';
-    if (totalPagado > 0 && totalPagado < p.monto_esperado) estado = 'parcial';
+    if (omitido) estado = 'omitido';
+    else if (totalPagado > 0 && totalPagado < p.monto_esperado) estado = 'parcial';
     else if (totalPagado > 0 && totalPagado >= p.monto_esperado) estado = 'completo';
     return {
       ...p,
@@ -253,9 +262,18 @@ export function estadoPagosFijosMes() {
       totalPagado,
       restante: Math.max(0, p.monto_esperado - totalPagado),
       estado,
+      omitido,
       pagado: estado === 'completo', // se mantiene por compatibilidad
     };
   });
+}
+
+export function omitirPagoFijoEsteMes(pagoFijoId) {
+  run('INSERT OR IGNORE INTO pagos_fijos_omitidos (pago_fijo_id, mes) VALUES (?, ?)', [pagoFijoId, mesActualISO()]);
+}
+
+export function deshacerOmisionPagoFijo(pagoFijoId) {
+  run('DELETE FROM pagos_fijos_omitidos WHERE pago_fijo_id = ? AND mes = ?', [pagoFijoId, mesActualISO()]);
 }
 
 export function agregarPagoFijo({ nombre, montoEsperado, categoriaId, diaEsperado, deudaId }) {
@@ -469,6 +487,54 @@ export function actualizarInversion(id, { nombre, tipo, valorInvertido, valorAct
 
 export function eliminarInversion(id) {
   run('DELETE FROM inversiones WHERE id = ?', [id]);
+  run('DELETE FROM inversiones_compras WHERE inversion_id = ?', [id]);
+}
+
+// --- Historial de compras (DCA) ---
+// El costo total de una inversión con historial se calcula solo, sumando
+// sus compras — deja de ser un número que se escribe a mano.
+
+export function listaComprasInversion(inversionId) {
+  return queryAll('SELECT * FROM inversiones_compras WHERE inversion_id = ? ORDER BY fecha DESC, id DESC', [inversionId]);
+}
+
+export function cantidadTotalInversion(inversionId) {
+  return queryOne('SELECT COALESCE(SUM(cantidad), 0) AS total FROM inversiones_compras WHERE inversion_id = ?', [inversionId]).total;
+}
+
+export function agregarCompraInversion(inversionId, { fecha, montoInvertido, cantidad }) {
+  run('INSERT INTO inversiones_compras (inversion_id, fecha, monto_invertido, cantidad) VALUES (?, ?, ?, ?)', [
+    inversionId, fecha, montoInvertido, cantidad || null,
+  ]);
+  recalcularTotalesInversion(inversionId);
+}
+
+export function eliminarCompraInversion(id, inversionId) {
+  run('DELETE FROM inversiones_compras WHERE id = ?', [id]);
+  recalcularTotalesInversion(inversionId);
+}
+
+// Recalcula el costo total (siempre) y, si la inversión usa precio por
+// unidad, también el valor actual — a partir de las compras registradas.
+export function recalcularTotalesInversion(inversionId) {
+  const compras = listaComprasInversion(inversionId);
+  const inv = queryOne('SELECT * FROM inversiones WHERE id = ?', [inversionId]);
+  if (!inv) return;
+  const totalInvertido = compras.reduce((s, c) => s + c.monto_invertido, 0);
+  let valorActual = inv.valor_actual;
+  if (inv.usa_precio_unidad) {
+    const cantidadTotal = cantidadTotalInversion(inversionId);
+    valorActual = cantidadTotal * inv.precio_actual_unidad;
+  }
+  run('UPDATE inversiones SET valor_invertido = ?, valor_actual = ? WHERE id = ?', [totalInvertido, valorActual, inversionId]);
+}
+
+// Activa o desactiva el cálculo automático del valor actual por cantidad × precio.
+export function configurarPrecioUnidad(inversionId, { usaPrecioUnidad, precioActualUnidad }) {
+  run('UPDATE inversiones SET usa_precio_unidad = ?, precio_actual_unidad = ? WHERE id = ?', [
+    usaPrecioUnidad ? 1 : 0, precioActualUnidad || 0, inversionId,
+  ]);
+  if (usaPrecioUnidad) recalcularTotalesInversion(inversionId);
 }
 
 // --- Proyección de patrimonio (interés compuesto) ---
@@ -483,6 +549,49 @@ export function proyectarPatrimonio({ years, aporteMensual, tasaAnual }) {
     if (i % 12 === 0) serie.push(valor);
   }
   return serie;
+}
+
+// --- Simulador de crédito (tabla de amortización) ---
+// Sistema de cuota fija (francés): la cuota mensual no cambia, pero cada
+// mes paga más capital y menos interés a medida que baja el saldo.
+
+export function simularAmortizacion({ monto, tasaMensualPct, plazoMeses }) {
+  const i = tasaMensualPct / 100;
+  const cuota = i === 0 ? monto / plazoMeses : (monto * i) / (1 - Math.pow(1 + i, -plazoMeses));
+
+  const filas = [];
+  let saldo = monto;
+  let totalIntereses = 0;
+
+  for (let n = 1; n <= plazoMeses; n++) {
+    const interes = saldo * i;
+    let abonoCapital = cuota - interes;
+    let cuotaDeEstaFila = cuota;
+    if (n === plazoMeses) {
+      // Ajuste final para que el saldo quede exactamente en cero,
+      // sin importar el redondeo acumulado de los meses anteriores.
+      abonoCapital = saldo;
+      cuotaDeEstaFila = abonoCapital + interes;
+    }
+    const saldoFinal = Math.max(0, saldo - abonoCapital);
+    filas.push({
+      numero: n,
+      saldoInicial: saldo,
+      cuota: cuotaDeEstaFila,
+      interes,
+      abonoCapital,
+      saldoFinal,
+    });
+    totalIntereses += interes;
+    saldo = saldoFinal;
+  }
+
+  return {
+    cuotaMensual: cuota,
+    totalIntereses,
+    totalPagado: monto + totalIntereses,
+    filas,
+  };
 }
 
 // --- Meta de patrimonio ("¿cuándo soy millonario a este ritmo?") ---

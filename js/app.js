@@ -19,6 +19,33 @@ let seccionesAbiertas = new Set(); // categorías desplegadas en los acordeones
 const fmt = (v) => '$' + Math.round(v || 0).toLocaleString('es-CO');
 const pct = (v) => Math.round(v || 0) + '%';
 
+// Formatea un input de dinero mientras el usuario escribe (1500000 -> 1.500.000),
+// conservando la posición del cursor, y da una función para leer el número real.
+function formatearMiles(texto) {
+  const digitos = String(texto).replace(/\D/g, '');
+  if (!digitos) return '';
+  return Number(digitos).toLocaleString('es-CO');
+}
+
+function activarSeparadorMiles(input) {
+  if (!input) return;
+  input.addEventListener('input', () => {
+    const digitosAntes = input.value.slice(0, input.selectionStart).replace(/\D/g, '').length;
+    input.value = formatearMiles(input.value);
+    let pos = 0, contados = 0;
+    while (pos < input.value.length && contados < digitosAntes) {
+      if (/\d/.test(input.value[pos])) contados++;
+      pos++;
+    }
+    input.setSelectionRange(pos, pos);
+  });
+}
+
+function valorMiles(input) {
+  if (!input) return 0;
+  return Number(String(input.value).replace(/\D/g, '')) || 0;
+}
+
 function icon(name, cls) {
   return `<i class="ti ${name}" aria-hidden="true"></i>`;
 }
@@ -271,13 +298,13 @@ function renderPagosFijosAgrupados(pagosFijos) {
     const clave = `pago:${nombreGrupo}`;
     const abierta = seccionesAbiertas.has(clave);
     const totalPagado = items.reduce((s, p) => s + p.totalPagado, 0);
-    const totalEsperado = items.reduce((s, p) => s + p.monto_esperado, 0);
-    const completos = items.filter((p) => p.estado === 'completo').length;
+    const totalEsperado = items.filter((p) => p.estado !== 'omitido').reduce((s, p) => s + p.monto_esperado, 0);
+    const resueltos = items.filter((p) => p.estado === 'completo' || p.estado === 'omitido').length;
     return `
       <button class="acordeon-header" data-acordeon="${clave}">
         <i class="ti ${abierta ? 'ti-chevron-down' : 'ti-chevron-right'}" aria-hidden="true"></i>
         <span style="flex:1;text-align:left;">${nombreGrupo}</span>
-        <span class="muted" style="font-size:12px;">${completos}/${items.length} · ${fmt(totalPagado)} de ${fmt(totalEsperado)}</span>
+        <span class="muted" style="font-size:12px;">${resueltos}/${items.length} · ${fmt(totalPagado)} de ${fmt(totalEsperado)}</span>
       </button>
       ${abierta ? `<div style="padding:2px 0 8px;">${items.map((p) => pagoFijoRow(p)).join('')}</div>` : ''}
     `;
@@ -286,28 +313,64 @@ function renderPagosFijosAgrupados(pagosFijos) {
 
 function renderPagosFijosAjustesAgrupados(pagosFijos) {
   const grupos = agruparPorCategoria(pagosFijos);
-  const nombres = Object.keys(grupos);
-  return nombres.map((nombreGrupo, idx) => `
-    ${idx > 0 ? '<div style="height:14px;"></div>' : ''}
-    <p class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.03em;margin:0 0 4px;">${nombreGrupo}</p>
-    ${grupos[nombreGrupo].map((p) => `
-      <div class="list-item">
-        <div class="icon-badge neutral"><i class="ti ${p.icono || 'ti-calendar-due'}" aria-hidden="true"></i></div>
-        <div style="flex:1;">
-          <p style="font-size:13px;margin:0;">${p.nombre}</p>
-          <p class="muted" style="margin:0;">${fmt(p.monto_esperado)}${p.dia_esperado ? ' · día ' + p.dia_esperado : ''}${p.deuda_nombre ? ' · abona a ' + p.deuda_nombre : ''}</p>
+  return Object.keys(grupos).map((nombreGrupo) => {
+    const items = grupos[nombreGrupo];
+    const clave = `ajuste-pago:${nombreGrupo}`;
+    const abierta = seccionesAbiertas.has(clave);
+    const totalEsperado = items.reduce((s, p) => s + p.monto_esperado, 0);
+    return `
+      <button class="acordeon-header" data-acordeon="${clave}">
+        <i class="ti ${abierta ? 'ti-chevron-down' : 'ti-chevron-right'}" aria-hidden="true"></i>
+        <span style="flex:1;text-align:left;">${nombreGrupo}</span>
+        <span class="muted" style="font-size:12px;">${items.length} · ${fmt(totalEsperado)}</span>
+      </button>
+      ${abierta ? `<div style="padding:2px 0 8px;">${items.map((p) => `
+        <div class="list-item">
+          <div class="icon-badge neutral"><i class="ti ${p.icono || 'ti-calendar-due'}" aria-hidden="true"></i></div>
+          <div style="flex:1;">
+            <p style="font-size:13px;margin:0;">${p.nombre}</p>
+            <p class="muted" style="margin:0;">${fmt(p.monto_esperado)}${p.dia_esperado ? ' · día ' + p.dia_esperado : ''}${p.deuda_nombre ? ' · abona a ' + p.deuda_nombre : ''}</p>
+          </div>
+          <button class="icon-btn" data-edit-pago-fijo="${p.id}" aria-label="Editar"><i class="ti ti-pencil" aria-hidden="true"></i></button>
         </div>
-        <button class="icon-btn" data-edit-pago-fijo="${p.id}" aria-label="Editar"><i class="ti ti-pencil" aria-hidden="true"></i></button>
-      </div>
-    `).join('')}
-  `).join('');
+      `).join('')}</div>` : ''}
+    `;
+  }).join('');
+}
+
+function renderIngresosFijosAjustesAgrupados(ingresosFijos) {
+  const grupos = agruparPorCategoria(ingresosFijos);
+  return Object.keys(grupos).map((nombreGrupo) => {
+    const items = grupos[nombreGrupo];
+    const clave = `ajuste-ingreso:${nombreGrupo}`;
+    const abierta = seccionesAbiertas.has(clave);
+    const totalEsperado = items.reduce((s, i) => s + i.monto_esperado, 0);
+    return `
+      <button class="acordeon-header" data-acordeon="${clave}">
+        <i class="ti ${abierta ? 'ti-chevron-down' : 'ti-chevron-right'}" aria-hidden="true"></i>
+        <span style="flex:1;text-align:left;">${nombreGrupo}</span>
+        <span class="muted" style="font-size:12px;">${items.length} · ${fmt(totalEsperado)}</span>
+      </button>
+      ${abierta ? `<div style="padding:2px 0 8px;">${items.map((i) => `
+        <div class="list-item">
+          <div class="icon-badge success"><i class="ti ${i.icono || 'ti-cash'}" aria-hidden="true"></i></div>
+          <div style="flex:1;">
+            <p style="font-size:13px;margin:0;">${i.nombre}</p>
+            <p class="muted" style="margin:0;">${fmt(i.monto_esperado)}${i.dia_esperado ? ' · día ' + i.dia_esperado : ''}</p>
+          </div>
+          <button class="icon-btn" data-edit-ingreso-fijo="${i.id}" aria-label="Editar"><i class="ti ti-pencil" aria-hidden="true"></i></button>
+        </div>
+      `).join('')}</div>` : ''}
+    `;
+  }).join('');
 }
 
 function pagoFijoRow(p) {
-  const badgeTono = p.estado === 'completo' ? 'success' : p.estado === 'parcial' ? 'warning' : 'warning';
-  const icono = p.estado === 'completo' ? 'ti-check' : p.estado === 'parcial' ? 'ti-progress' : 'ti-clock';
+  const badgeTono = p.estado === 'completo' ? 'success' : p.estado === 'omitido' ? 'neutral' : 'warning';
+  const icono = p.estado === 'completo' ? 'ti-check' : p.estado === 'omitido' ? 'ti-player-skip-forward' : p.estado === 'parcial' ? 'ti-progress' : 'ti-clock';
   let subtexto;
   if (p.estado === 'completo') subtexto = 'Pagado este mes';
+  else if (p.estado === 'omitido') subtexto = 'Omitido este mes';
   else if (p.estado === 'parcial') subtexto = `Pagado ${fmt(p.totalPagado)} de ${fmt(p.monto_esperado)} · falta ${fmt(p.restante)}`;
   else subtexto = p.dia_esperado ? `Vence cerca del día ${p.dia_esperado}` : 'Pendiente este mes';
 
@@ -320,7 +383,7 @@ function pagoFijoRow(p) {
         <p style="font-size:13px;margin:0;">${p.nombre}${p.deuda_nombre ? ` <span class="muted" style="font-size:11px;">· abona a ${p.deuda_nombre}</span>` : ''}</p>
         <p class="muted" style="margin:0;">${subtexto}</p>
       </div>
-      <span style="font-size:13px;font-weight:500;" class="${p.estado === 'completo' ? 'pos' : ''}">${fmt(p.estado === 'pendiente' ? p.monto_esperado : p.totalPagado)}</span>
+      <span style="font-size:13px;font-weight:500;" class="${p.estado === 'completo' ? 'pos' : ''}">${p.estado === 'omitido' ? '—' : fmt(p.estado === 'pendiente' ? p.monto_esperado : p.totalPagado)}</span>
     </div>
   `;
 }
@@ -413,7 +476,7 @@ function openModalMovimiento(movimientoExistente) {
 
       <div class="field">
         <label>¿Cuánto?</label>
-        <input type="number" id="mov-monto" placeholder="0" min="0" step="1" value="${esEdicion ? movimientoExistente.monto : ''}" />
+        <input type="text" inputmode="numeric" id="mov-monto" placeholder="0" value="${esEdicion ? formatearMiles(movimientoExistente.monto) : ''}" />
         <p class="muted" id="mov-monto-error" style="display:none;color:var(--danger-text);margin:4px 0 0;">Escribe cuánto entró o salió.</p>
       </div>
 
@@ -446,6 +509,7 @@ function openModalMovimiento(movimientoExistente) {
     </div>
   `;
   document.body.appendChild(overlay);
+  activarSeparadorMiles(overlay.querySelector('#mov-monto'));
 
   let tipoActual = esEdicion ? movimientoExistente.tipo : 'gasto';
   let categoriaSeleccionada = esEdicion ? movimientoExistente.categoria_id : null;
@@ -489,7 +553,7 @@ function openModalMovimiento(movimientoExistente) {
     const montoInput = overlay.querySelector('#mov-monto');
     const montoError = overlay.querySelector('#mov-monto-error');
     const cuentaSelect = overlay.querySelector('#mov-cuenta');
-    const monto = Number(montoInput.value);
+    const monto = valorMiles(montoInput);
     const fecha = overlay.querySelector('#mov-fecha').value;
     const nota = overlay.querySelector('#mov-nota').value;
 
@@ -551,6 +615,12 @@ function openModalDetallePagoFijo(pagoInicial) {
         </div>` : ''}
         ${pago.deuda_nombre ? `<p class="muted" style="margin:0 0 14px;">Cada pago de este item abona a "${pago.deuda_nombre}".</p>` : ''}
 
+        ${pago.omitido ? `
+          <div class="metric-card" style="margin-bottom:14px;">
+            <p style="font-size:13px;margin:0;"><i class="ti ti-player-skip-forward" aria-hidden="true"></i> Marcaste este pago como omitido este mes.</p>
+          </div>
+          <button id="dp-deshacer-omitir" style="width:100%;">Deshacer, sí lo voy a pagar</button>
+        ` : `
         ${pago.pagos.length > 0 ? `
           <p class="label" style="margin-bottom:6px;">Pagos registrados este mes</p>
           ${pago.pagos.map((m) => `
@@ -566,7 +636,7 @@ function openModalDetallePagoFijo(pagoInicial) {
 
         <p class="label" style="margin-bottom:6px;">${pago.pagos.length > 0 ? 'Agregar otro pago' : 'Registrar pago'}</p>
         <div class="field">
-          <input type="number" id="dp-monto" placeholder="0" min="0" step="1" value="${pago.restante > 0 ? pago.restante : ''}" />
+          <input type="text" inputmode="numeric" id="dp-monto" placeholder="0" value="${pago.restante > 0 ? formatearMiles(pago.restante) : ''}" />
           <p class="muted" id="dp-monto-error" style="display:none;color:var(--danger-text);margin:4px 0 0;">Escribe cuánto pagaste.</p>
         </div>
         <div class="field">
@@ -577,11 +647,26 @@ function openModalDetallePagoFijo(pagoInicial) {
         <div class="field">
           <input type="date" id="dp-fecha" value="${new Date().toISOString().slice(0, 10)}" />
         </div>
-        <button class="primary" id="dp-guardar" style="width:100%;">Agregar pago</button>
+        <button class="primary" id="dp-guardar" style="width:100%;margin-bottom:8px;">Agregar pago</button>
+        ${pago.pagos.length === 0 ? '<button id="dp-omitir" style="width:100%;">Omitir este mes</button>' : ''}
+        `}
       </div>
     `;
 
     overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
+    activarSeparadorMiles(overlay.querySelector('#dp-monto'));
+    const btnOmitir = overlay.querySelector('#dp-omitir');
+    if (btnOmitir) btnOmitir.addEventListener('click', () => {
+      domain.omitirPagoFijoEsteMes(pago.id);
+      renderContenido();
+      render();
+    });
+    const btnDeshacerOmitir = overlay.querySelector('#dp-deshacer-omitir');
+    if (btnDeshacerOmitir) btnDeshacerOmitir.addEventListener('click', () => {
+      domain.deshacerOmisionPagoFijo(pago.id);
+      renderContenido();
+      render();
+    });
     overlay.querySelectorAll('[data-eliminar-pago]').forEach((btn) => {
       btn.addEventListener('click', () => {
         if (confirm('¿Eliminar este pago?')) {
@@ -591,9 +676,10 @@ function openModalDetallePagoFijo(pagoInicial) {
         }
       });
     });
-    overlay.querySelector('#dp-guardar').addEventListener('click', () => {
+    const btnGuardarPago = overlay.querySelector('#dp-guardar');
+    if (btnGuardarPago) btnGuardarPago.addEventListener('click', () => {
       const montoInput = overlay.querySelector('#dp-monto');
-      const monto = Number(montoInput.value);
+      const monto = valorMiles(montoInput);
       const cuentaSelect = overlay.querySelector('#dp-cuenta');
       const sinMonto = !monto || monto <= 0;
       overlay.querySelector('#dp-monto-error').style.display = sinMonto ? 'block' : 'none';
@@ -625,7 +711,7 @@ function openModalMarcarIngreso(ingreso) {
       </div>
       <div class="field">
         <label>¿Cuánto recibiste?</label>
-        <input type="number" id="if-monto-real" value="${ingreso.monto_esperado || ''}" placeholder="0" min="0" step="1" />
+        <input type="text" inputmode="numeric" id="if-monto-real" value="${ingreso.monto_esperado ? formatearMiles(ingreso.monto_esperado) : ''}" placeholder="0" />
         <p class="muted" id="if-monto-real-error" style="display:none;color:var(--danger-text);margin:4px 0 0;">Escribe cuánto recibiste.</p>
       </div>
       <div class="field">
@@ -642,11 +728,12 @@ function openModalMarcarIngreso(ingreso) {
     </div>
   `;
   document.body.appendChild(overlay);
+  activarSeparadorMiles(overlay.querySelector('#if-monto-real'));
   overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   overlay.querySelector('#if-guardar').addEventListener('click', () => {
     const montoInput = overlay.querySelector('#if-monto-real');
-    const monto = Number(montoInput.value);
+    const monto = valorMiles(montoInput);
     const cuentaSelect = overlay.querySelector('#if-cuenta');
     const sinMonto = !monto || monto <= 0;
     overlay.querySelector('#if-monto-real-error').style.display = sinMonto ? 'block' : 'none';
@@ -679,7 +766,7 @@ function openModalIngresoFijo(ingresoExistente) {
       </div>
       <div class="field">
         <label>Monto esperado (aprox.)</label>
-        <input type="number" id="if-monto-esperado" placeholder="0" value="${esEdicion ? ingresoExistente.monto_esperado : ''}" />
+        <input type="text" inputmode="numeric" id="if-monto-esperado" placeholder="0" value="${esEdicion ? formatearMiles(ingresoExistente.monto_esperado) : ''}" />
       </div>
       <div class="field">
         <label>Categoría</label>
@@ -696,12 +783,13 @@ function openModalIngresoFijo(ingresoExistente) {
     </div>
   `;
   document.body.appendChild(overlay);
+  activarSeparadorMiles(overlay.querySelector('#if-monto-esperado'));
   overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   overlay.querySelector('#if-def-guardar').addEventListener('click', () => {
     const nombre = overlay.querySelector('#if-nombre').value.trim();
     if (!nombre) { overlay.querySelector('#if-nombre').focus(); return; }
-    const montoEsperado = Number(overlay.querySelector('#if-monto-esperado').value) || 0;
+    const montoEsperado = valorMiles(overlay.querySelector('#if-monto-esperado'));
     const categoriaId = Number(overlay.querySelector('#if-categoria').value);
     const diaEsperado = Number(overlay.querySelector('#if-dia').value) || null;
     if (esEdicion) {
@@ -740,7 +828,7 @@ function openModalPagoFijo(pagoExistente) {
       </div>
       <div class="field">
         <label>Monto esperado (aprox.)</label>
-        <input type="number" id="pf-monto-esperado" placeholder="0" value="${esEdicion ? pagoExistente.monto_esperado : ''}" />
+        <input type="text" inputmode="numeric" id="pf-monto-esperado" placeholder="0" value="${esEdicion ? formatearMiles(pagoExistente.monto_esperado) : ''}" />
       </div>
       <div class="field">
         <label>Categoría</label>
@@ -765,12 +853,13 @@ function openModalPagoFijo(pagoExistente) {
     </div>
   `;
   document.body.appendChild(overlay);
+  activarSeparadorMiles(overlay.querySelector('#pf-monto-esperado'));
   overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   overlay.querySelector('#pf-def-guardar').addEventListener('click', () => {
     const nombre = overlay.querySelector('#pf-nombre').value.trim();
     if (!nombre) { overlay.querySelector('#pf-nombre').focus(); return; }
-    const montoEsperado = Number(overlay.querySelector('#pf-monto-esperado').value) || 0;
+    const montoEsperado = valorMiles(overlay.querySelector('#pf-monto-esperado'));
     const categoriaId = Number(overlay.querySelector('#pf-categoria').value);
     const diaEsperado = Number(overlay.querySelector('#pf-dia').value) || null;
     const deudaValue = overlay.querySelector('#pf-deuda').value;
@@ -848,7 +937,7 @@ function openModalCuenta(cuentaExistente) {
       </div>
       <div class="field">
         <label>Saldo actual</label>
-        <input type="number" id="cta-saldo" placeholder="0" value="${esEdicion ? cuentaExistente.saldo : ''}" />
+        <input type="text" inputmode="numeric" id="cta-saldo" placeholder="0" value="${esEdicion ? formatearMiles(cuentaExistente.saldo) : ''}" />
         ${esEdicion ? '<p class="muted" style="margin:4px 0 0;">Ajusta este número si el saldo no coincide con la realidad.</p>' : ''}
       </div>
       <button class="primary" id="cta-guardar" style="width:100%;margin-bottom:8px;">Guardar</button>
@@ -856,12 +945,13 @@ function openModalCuenta(cuentaExistente) {
     </div>
   `;
   document.body.appendChild(overlay);
+  activarSeparadorMiles(overlay.querySelector('#cta-saldo'));
   overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   overlay.querySelector('#cta-guardar').addEventListener('click', () => {
     const nombre = overlay.querySelector('#cta-nombre').value.trim();
     const tipo = overlay.querySelector('#cta-tipo').value;
-    const saldoIngresado = Number(overlay.querySelector('#cta-saldo').value) || 0;
+    const saldoIngresado = valorMiles(overlay.querySelector('#cta-saldo'));
     if (!nombre) { overlay.querySelector('#cta-nombre').focus(); return; }
     if (esEdicion) {
       // El campo muestra el saldo actual (ya incluye movimientos); recalculamos
@@ -1030,7 +1120,7 @@ function attachInversionesEvents() {
   document.querySelectorAll('[data-inv-id]').forEach((row) => {
     row.addEventListener('click', () => {
       const inv = domain.listaInversiones().find((i) => i.id === Number(row.dataset.invId));
-      if (inv) openModalInversion(inv);
+      if (inv) openModalDetalleInversion(inv);
     });
   });
 
@@ -1061,7 +1151,7 @@ function openModalMeta() {
       </div>
       <div class="field">
         <label>¿Cuánto patrimonio quieres alcanzar?</label>
-        <input type="number" id="meta-monto" placeholder="Ej: 1000000000" value="${p.meta || ''}" />
+        <input type="text" inputmode="numeric" id="meta-monto" placeholder="Ej: 1.000.000.000" value="${p.meta ? formatearMiles(p.meta) : ''}" />
       </div>
       <div class="field">
         <label>Rentabilidad anual esperada de tus inversiones (%)</label>
@@ -1072,10 +1162,11 @@ function openModalMeta() {
     </div>
   `;
   document.body.appendChild(overlay);
+  activarSeparadorMiles(overlay.querySelector('#meta-monto'));
   overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   overlay.querySelector('#meta-guardar').addEventListener('click', () => {
-    const monto = Number(overlay.querySelector('#meta-monto').value) || 0;
+    const monto = valorMiles(overlay.querySelector('#meta-monto'));
     const tasa = Number(overlay.querySelector('#meta-tasa').value) || 8;
     domain.setMetaPatrimonio(monto);
     domain.setTasaAnualEsperada(tasa);
@@ -1084,39 +1175,40 @@ function openModalMeta() {
   });
 }
 
-function openModalInversion(invExistente) {
-  const esEdicion = !!invExistente;
+function openModalInversion() {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal-sheet">
       <div class="row-between" style="margin-bottom:14px;">
-        <h2 style="margin:0;">${esEdicion ? 'Editar inversión' : 'Nueva inversión'}</h2>
+        <h2 style="margin:0;">Nueva inversión</h2>
         <button class="icon-btn" id="modal-close" aria-label="Cerrar"><i class="ti ti-x" aria-hidden="true"></i></button>
       </div>
       <div class="field">
         <label>Nombre</label>
-        <input type="text" id="inv-nombre" placeholder="Ej: Bitcoin, CDT Bancolombia" value="${esEdicion ? invExistente.nombre : ''}" />
+        <input type="text" id="inv-nombre" placeholder="Ej: Bitcoin, CDT Bancolombia" />
       </div>
       <div class="field">
         <label>Tipo</label>
         <select id="inv-tipo">
-          ${TIPOS_INVERSION.map((t) => `<option value="${t.id}" ${esEdicion && invExistente.tipo === t.id ? 'selected' : ''}>${t.nombre}</option>`).join('')}
+          ${TIPOS_INVERSION.map((t) => `<option value="${t.id}">${t.nombre}</option>`).join('')}
         </select>
       </div>
       <div class="field">
         <label>Cuánto has invertido en total (costo)</label>
-        <input type="number" id="inv-costo" placeholder="0" value="${esEdicion ? invExistente.valor_invertido : ''}" />
+        <input type="text" inputmode="numeric" id="inv-costo" placeholder="0" />
       </div>
       <div class="field">
         <label>Cuánto vale hoy</label>
-        <input type="number" id="inv-actual" placeholder="0" value="${esEdicion ? invExistente.valor_actual : ''}" />
+        <input type="text" inputmode="numeric" id="inv-actual" placeholder="0" />
       </div>
-      <button class="primary" id="inv-guardar" style="width:100%;margin-bottom:8px;">Guardar</button>
-      ${esEdicion ? '<button id="inv-eliminar" style="width:100%;color:var(--danger-text);">Eliminar inversión</button>' : ''}
+      <p class="muted" style="margin:-4px 0 12px;">Después de crearla podrás llevar un historial de compras (DCA) tocándola desde la lista.</p>
+      <button class="primary" id="inv-guardar" style="width:100%;">Guardar</button>
     </div>
   `;
   document.body.appendChild(overlay);
+  activarSeparadorMiles(overlay.querySelector('#inv-costo'));
+  activarSeparadorMiles(overlay.querySelector('#inv-actual'));
   overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
@@ -1124,25 +1216,162 @@ function openModalInversion(invExistente) {
     const nombre = overlay.querySelector('#inv-nombre').value.trim();
     if (!nombre) { overlay.querySelector('#inv-nombre').focus(); return; }
     const tipo = overlay.querySelector('#inv-tipo').value;
-    const valorInvertido = Number(overlay.querySelector('#inv-costo').value) || 0;
-    const valorActual = Number(overlay.querySelector('#inv-actual').value) || 0;
-    if (esEdicion) {
-      domain.actualizarInversion(invExistente.id, { nombre, tipo, valorInvertido, valorActual });
-    } else {
-      domain.agregarInversion({ nombre, tipo, valorInvertido, valorActual });
-    }
+    const valorInvertido = valorMiles(overlay.querySelector('#inv-costo'));
+    const valorActual = valorMiles(overlay.querySelector('#inv-actual'));
+    domain.agregarInversion({ nombre, tipo, valorInvertido, valorActual });
     overlay.remove();
     render();
   });
+}
 
-  const btnEliminar = overlay.querySelector('#inv-eliminar');
-  if (btnEliminar) {
-    btnEliminar.addEventListener('click', () => {
-      domain.eliminarInversion(invExistente.id);
+// ---------- Modal: detalle de una inversión existente (con historial DCA) ----------
+
+function openModalDetalleInversion(invInicial) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  document.body.appendChild(overlay);
+
+  function renderContenido() {
+    const inv = domain.listaInversiones().find((i) => i.id === invInicial.id);
+    if (!inv) { overlay.remove(); return; }
+    const compras = domain.listaComprasInversion(inv.id);
+    const cantidadTotal = domain.cantidadTotalInversion(inv.id);
+    const rentabilidad = domain.rentabilidadInversion(inv);
+    const info = tipoInversionInfo(inv.tipo);
+
+    overlay.innerHTML = `
+      <div class="modal-sheet">
+        <div class="row-between" style="margin-bottom:4px;">
+          <h2 style="margin:0;">${inv.nombre}</h2>
+          <button class="icon-btn" id="modal-close" aria-label="Cerrar"><i class="ti ti-x" aria-hidden="true"></i></button>
+        </div>
+        <p class="muted" style="margin:0 0 14px;">${info.nombre}</p>
+
+        <div class="row-between" style="font-size:13px;margin-bottom:4px;">
+          <span class="muted">Total invertido</span><span style="font-weight:500;">${fmt(inv.valor_invertido)}</span>
+        </div>
+        <div class="row-between" style="font-size:13px;margin-bottom:10px;">
+          <span class="muted">Valor actual</span>
+          <span style="font-weight:500;">${fmt(inv.valor_actual)} <span class="${rentabilidad >= 0 ? 'pos' : 'neg'}" style="font-size:12px;">(${rentabilidad >= 0 ? '+' : ''}${rentabilidad.toFixed(1)}%)</span></span>
+        </div>
+
+        <div style="border-top:0.5px solid var(--border);padding-top:10px;margin-bottom:14px;">
+          <div class="field" style="display:flex;align-items:center;gap:8px;margin-bottom:${inv.usa_precio_unidad ? '10px' : '0'};">
+            <input type="checkbox" id="inv-usa-precio" ${inv.usa_precio_unidad ? 'checked' : ''} style="width:auto;height:auto;" />
+            <label for="inv-usa-precio" style="margin:0;font-size:13px;">Calcular el valor actual solo (cantidad × precio)</label>
+          </div>
+          ${inv.usa_precio_unidad ? `
+            <p class="muted" style="margin:0 0 6px;">Tienes ${cantidadTotal} unidades en total.</p>
+            <div class="field" style="margin-bottom:0;">
+              <label>Precio actual por unidad</label>
+              <input type="text" inputmode="numeric" id="inv-precio-unidad" value="${formatearMiles(inv.precio_actual_unidad)}" />
+            </div>
+            <button id="inv-actualizar-precio" style="width:100%;margin-top:8px;">Actualizar precio</button>
+          ` : `
+            <div class="field" style="margin-bottom:0;">
+              <label>Valor actual (manual)</label>
+              <input type="text" inputmode="numeric" id="inv-actual-manual" value="${formatearMiles(inv.valor_actual)}" />
+            </div>
+            <button id="inv-actualizar-manual" style="width:100%;margin-top:8px;">Actualizar valor</button>
+          `}
+        </div>
+
+        ${compras.length > 0 ? `
+          <p class="label" style="margin-bottom:6px;">Historial de compras</p>
+          ${compras.map((c) => `
+            <div class="list-item">
+              <div class="icon-badge neutral" style="width:26px;height:26px;"><i class="ti ti-shopping-cart" style="font-size:13px;" aria-hidden="true"></i></div>
+              <div style="flex:1;">
+                <p style="font-size:13px;margin:0;">${c.fecha}</p>
+                ${c.cantidad ? `<p class="muted" style="margin:0;">${c.cantidad} unidades</p>` : ''}
+              </div>
+              <span style="font-size:13px;font-weight:500;margin-right:6px;">${fmt(c.monto_invertido)}</span>
+              <button class="icon-btn" data-eliminar-compra="${c.id}" aria-label="Eliminar compra"><i class="ti ti-trash" style="font-size:15px;" aria-hidden="true"></i></button>
+            </div>
+          `).join('')}
+          <div style="height:10px;"></div>
+        ` : '<p class="muted" style="margin-bottom:10px;">Aún no tienes compras registradas. Si haces DCA (compras periódicas), regístralas aquí y el costo total se calcula solo.</p>'}
+
+        <p class="label" style="margin-bottom:6px;">Registrar una compra</p>
+        <div class="field">
+          <label>Cuánto invertiste</label>
+          <input type="text" inputmode="numeric" id="compra-monto" placeholder="0" />
+        </div>
+        <div class="field">
+          <label>Cantidad de unidades (opcional)</label>
+          <input type="text" id="compra-cantidad" placeholder="Ej: 0.0045 BTC, 3 acciones" />
+        </div>
+        <div class="field">
+          <input type="date" id="compra-fecha" value="${new Date().toISOString().slice(0, 10)}" />
+        </div>
+        <button class="primary" id="compra-guardar" style="width:100%;margin-bottom:8px;">Agregar compra</button>
+        <button id="inv-eliminar" style="width:100%;color:var(--danger-text);">Eliminar inversión</button>
+      </div>
+    `;
+
+    overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
+    activarSeparadorMiles(overlay.querySelector('#compra-monto'));
+
+    overlay.querySelector('#inv-usa-precio').addEventListener('change', (e) => {
+      domain.configurarPrecioUnidad(inv.id, {
+        usaPrecioUnidad: e.target.checked,
+        precioActualUnidad: inv.precio_actual_unidad,
+      });
+      renderContenido();
+      render();
+    });
+
+    const precioInput = overlay.querySelector('#inv-precio-unidad');
+    if (precioInput) activarSeparadorMiles(precioInput);
+    const btnActualizarPrecio = overlay.querySelector('#inv-actualizar-precio');
+    if (btnActualizarPrecio) btnActualizarPrecio.addEventListener('click', () => {
+      const precio = valorMiles(precioInput);
+      domain.configurarPrecioUnidad(inv.id, { usaPrecioUnidad: true, precioActualUnidad: precio });
+      renderContenido();
+      render();
+    });
+
+    const manualInput = overlay.querySelector('#inv-actual-manual');
+    if (manualInput) activarSeparadorMiles(manualInput);
+    const btnActualizarManual = overlay.querySelector('#inv-actualizar-manual');
+    if (btnActualizarManual) btnActualizarManual.addEventListener('click', () => {
+      const nuevoValor = valorMiles(manualInput);
+      domain.actualizarInversion(inv.id, { nombre: inv.nombre, tipo: inv.tipo, valorInvertido: inv.valor_invertido, valorActual: nuevoValor });
+      renderContenido();
+      render();
+    });
+
+    overlay.querySelectorAll('[data-eliminar-compra]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (confirm('¿Eliminar esta compra?')) {
+          domain.eliminarCompraInversion(Number(btn.dataset.eliminarCompra), inv.id);
+          renderContenido();
+          render();
+        }
+      });
+    });
+
+    overlay.querySelector('#compra-guardar').addEventListener('click', () => {
+      const monto = valorMiles(overlay.querySelector('#compra-monto'));
+      const cantidadTexto = overlay.querySelector('#compra-cantidad').value.trim();
+      const cantidad = cantidadTexto ? Number(cantidadTexto.replace(/[^\d.]/g, '')) : null;
+      const fecha = overlay.querySelector('#compra-fecha').value;
+      if (!monto || monto <= 0) return;
+      domain.agregarCompraInversion(inv.id, { fecha, montoInvertido: monto, cantidad });
+      renderContenido();
+      render();
+    });
+
+    overlay.querySelector('#inv-eliminar').addEventListener('click', () => {
+      if (!confirm(`¿Eliminar "${inv.nombre}" y todo su historial de compras?`)) return;
+      domain.eliminarInversion(inv.id);
       overlay.remove();
       render();
     });
   }
+
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  renderContenido();
 }
 
 // ---------- Pantalla: Patrimonio ----------
@@ -1206,7 +1435,10 @@ function screenPatrimonio() {
 
     <div class="row-between">
       <h2 style="margin-bottom:0;">Deudas</h2>
-      <button class="icon-btn" id="btn-add-deuda" aria-label="Agregar deuda"><i class="ti ti-plus" aria-hidden="true"></i></button>
+      <div class="row" style="gap:4px;">
+        <button class="icon-btn" id="btn-simular-credito" aria-label="Simular crédito"><i class="ti ti-calculator" aria-hidden="true"></i></button>
+        <button class="icon-btn" id="btn-add-deuda" aria-label="Agregar deuda"><i class="ti ti-plus" aria-hidden="true"></i></button>
+      </div>
     </div>
     <div class="card">
       ${deudas.length === 0 ? emptyState('ti-credit-card', 'No tienes deudas registradas') :
@@ -1242,6 +1474,123 @@ function attachPatrimonioEvents() {
       if (deuda) openModalDeuda(deuda);
     });
   });
+
+  const btnSimularCredito = document.getElementById('btn-simular-credito');
+  if (btnSimularCredito) btnSimularCredito.addEventListener('click', () => openModalSimuladorCredito());
+}
+
+function openModalSimuladorCredito() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  let resultado = null;
+
+  function render() {
+    overlay.innerHTML = `
+      <div class="modal-sheet">
+        <div class="row-between" style="margin-bottom:14px;">
+          <h2 style="margin:0;">Simular crédito</h2>
+          <button class="icon-btn" id="modal-close" aria-label="Cerrar"><i class="ti ti-x" aria-hidden="true"></i></button>
+        </div>
+
+        <div class="field">
+          <label>Monto del crédito</label>
+          <input type="text" inputmode="numeric" id="sc-monto" placeholder="0" />
+        </div>
+        <div class="field">
+          <label>Tasa de interés</label>
+          <div class="row" style="gap:8px;">
+            <input type="number" id="sc-tasa" placeholder="Ej: 1.5" step="0.01" style="flex:1;" />
+            <select id="sc-tasa-tipo" style="flex:1;">
+              <option value="mensual">% mensual</option>
+              <option value="anual">% anual (÷12)</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label>Plazo (número de cuotas)</label>
+          <input type="number" id="sc-plazo" placeholder="Ej: 12" min="1" max="360" />
+        </div>
+        <button class="primary" id="sc-calcular" style="width:100%;margin-bottom:8px;">Calcular</button>
+
+        ${resultado ? `
+          <div style="border-top:0.5px solid var(--border);padding-top:14px;margin-top:6px;">
+            <div class="row-between" style="font-size:13px;margin-bottom:4px;">
+              <span class="muted">Cuota mensual</span><span style="font-weight:500;">${fmt(resultado.cuotaMensual)}</span>
+            </div>
+            <div class="row-between" style="font-size:13px;margin-bottom:4px;">
+              <span class="muted">Total intereses</span><span style="font-weight:500;" class="neg">${fmt(resultado.totalIntereses)}</span>
+            </div>
+            <div class="row-between" style="font-size:13px;margin-bottom:14px;">
+              <span class="muted">Total pagado</span><span style="font-weight:500;">${fmt(resultado.totalPagado)}</span>
+            </div>
+
+            <p class="label" style="margin-bottom:6px;">Tabla de amortización</p>
+            <div style="max-height:220px;overflow-y:auto;border:0.5px solid var(--border);border-radius:var(--radius);">
+              ${resultado.filas.map((f) => `
+                <div class="list-item" style="padding:8px 10px;">
+                  <div style="flex:1;">
+                    <p style="font-size:12px;margin:0;">Cuota ${f.numero}</p>
+                    <p class="muted" style="margin:0;font-size:11px;">Interés ${fmt(f.interes)} · Abono ${fmt(f.abonoCapital)}</p>
+                  </div>
+                  <div style="text-align:right;">
+                    <p style="font-size:12px;font-weight:500;margin:0;">${fmt(f.cuota)}</p>
+                    <p class="muted" style="margin:0;font-size:11px;">Saldo ${fmt(f.saldoFinal)}</p>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+
+            <div class="field" style="margin-top:14px;">
+              <label>Nombre para guardarlo como deuda</label>
+              <input type="text" id="sc-nombre-deuda" placeholder="Ej: Crédito vehículo" />
+            </div>
+            <div class="field" style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="sc-crear-pago-fijo" checked style="width:auto;height:auto;" />
+              <label for="sc-crear-pago-fijo" style="margin:0;font-size:13px;">Crear también un pago fijo mensual para la cuota</label>
+            </div>
+            <button class="primary" id="sc-guardar-deuda" style="width:100%;">Guardar como deuda</button>
+          </div>
+        ` : ''}
+      </div>
+    `;
+
+    activarSeparadorMiles(overlay.querySelector('#sc-monto'));
+    overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
+    overlay.querySelector('#sc-calcular').addEventListener('click', () => {
+      const monto = valorMiles(overlay.querySelector('#sc-monto'));
+      const tasaIngresada = Number(overlay.querySelector('#sc-tasa').value) || 0;
+      const tipoTasa = overlay.querySelector('#sc-tasa-tipo').value;
+      const plazoMeses = Number(overlay.querySelector('#sc-plazo').value) || 0;
+      if (monto <= 0 || tasaIngresada < 0 || plazoMeses <= 0) return;
+      const tasaMensualPct = tipoTasa === 'anual' ? tasaIngresada / 12 : tasaIngresada;
+      resultado = domain.simularAmortizacion({ monto, tasaMensualPct, plazoMeses });
+      resultado.montoOriginal = monto;
+      render();
+    });
+
+    const btnGuardarDeuda = overlay.querySelector('#sc-guardar-deuda');
+    if (btnGuardarDeuda) btnGuardarDeuda.addEventListener('click', () => {
+      const nombre = overlay.querySelector('#sc-nombre-deuda').value.trim();
+      if (!nombre) { overlay.querySelector('#sc-nombre-deuda').focus(); return; }
+      const deudaId = domain.agregarDeuda({ nombre, valor: resultado.montoOriginal });
+      if (overlay.querySelector('#sc-crear-pago-fijo').checked) {
+        const catDeudas = domain.categorias('gasto').find((c) => c.nombre === 'Deudas');
+        domain.agregarPagoFijo({
+          nombre: `Cuota ${nombre}`,
+          montoEsperado: Math.round(resultado.cuotaMensual),
+          categoriaId: catDeudas ? catDeudas.id : null,
+          diaEsperado: null,
+          deudaId,
+        });
+      }
+      overlay.remove();
+      window.navigate('patrimonio');
+    });
+  }
+
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  render();
 }
 
 function openModalBien(bienExistente) {
@@ -1260,19 +1609,20 @@ function openModalBien(bienExistente) {
       </div>
       <div class="field">
         <label>Valor aproximado</label>
-        <input type="number" id="bien-valor" placeholder="0" value="${esEdicion ? bienExistente.valor : ''}" />
+        <input type="text" inputmode="numeric" id="bien-valor" placeholder="0" value="${esEdicion ? formatearMiles(bienExistente.valor) : ''}" />
       </div>
       <button class="primary" id="bien-guardar" style="width:100%;margin-bottom:8px;">Guardar</button>
       ${esEdicion ? '<button id="bien-eliminar" style="width:100%;color:var(--danger-text);">Eliminar</button>' : ''}
     </div>
   `;
   document.body.appendChild(overlay);
+  activarSeparadorMiles(overlay.querySelector('#bien-valor'));
   overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   overlay.querySelector('#bien-guardar').addEventListener('click', () => {
     const nombre = overlay.querySelector('#bien-nombre').value.trim();
     if (!nombre) { overlay.querySelector('#bien-nombre').focus(); return; }
-    const valor = Number(overlay.querySelector('#bien-valor').value) || 0;
+    const valor = valorMiles(overlay.querySelector('#bien-valor'));
     if (esEdicion) domain.actualizarBien(bienExistente.id, { nombre, valor });
     else domain.agregarBien({ nombre, valor });
     overlay.remove();
@@ -1302,19 +1652,20 @@ function openModalDeuda(deudaExistente) {
       </div>
       <div class="field">
         <label>Cuánto debes hoy</label>
-        <input type="number" id="deuda-valor" placeholder="0" value="${esEdicion ? deudaExistente.valor : ''}" />
+        <input type="text" inputmode="numeric" id="deuda-valor" placeholder="0" value="${esEdicion ? formatearMiles(deudaExistente.valor) : ''}" />
       </div>
       <button class="primary" id="deuda-guardar" style="width:100%;margin-bottom:8px;">Guardar</button>
       ${esEdicion ? '<button id="deuda-eliminar" style="width:100%;color:var(--danger-text);">Eliminar</button>' : ''}
     </div>
   `;
   document.body.appendChild(overlay);
+  activarSeparadorMiles(overlay.querySelector('#deuda-valor'));
   overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   overlay.querySelector('#deuda-guardar').addEventListener('click', () => {
     const nombre = overlay.querySelector('#deuda-nombre').value.trim();
     if (!nombre) { overlay.querySelector('#deuda-nombre').focus(); return; }
-    const valor = Number(overlay.querySelector('#deuda-valor').value) || 0;
+    const valor = valorMiles(overlay.querySelector('#deuda-valor'));
     if (esEdicion) domain.actualizarDeuda(deudaExistente.id, { nombre, valor });
     else domain.agregarDeuda({ nombre, valor });
     overlay.remove();
@@ -1428,16 +1779,7 @@ function screenConfiguracion() {
     </div>
     <div class="card">
       ${ingresosFijos.length === 0 ? emptyState('ti-cash', 'No has definido ingresos fijos todavía') :
-        ingresosFijos.map((i) => `
-          <div class="list-item">
-            <div class="icon-badge success"><i class="ti ti-cash" aria-hidden="true"></i></div>
-            <div style="flex:1;">
-              <p style="font-size:13px;margin:0;">${i.nombre}</p>
-              <p class="muted" style="margin:0;">${fmt(i.monto_esperado)}${i.dia_esperado ? ' · día ' + i.dia_esperado : ''}</p>
-            </div>
-            <button class="icon-btn" data-edit-ingreso-fijo="${i.id}" aria-label="Editar"><i class="ti ti-pencil" aria-hidden="true"></i></button>
-          </div>
-        `).join('')}
+        renderIngresosFijosAjustesAgrupados(ingresosFijos)}
     </div>
 
     <div class="row-between">
@@ -1666,7 +2008,7 @@ let appBloqueada = false;
 let securityConfigCache = null; // copia en memoria para poder leerla sin await en render()
 
 function screenShell(contenidoHtml) {
-  app.innerHTML = `<div class="screen" style="padding-top:15vh;">${contenidoHtml}</div>`;
+  app.innerHTML = `<div class="screen-shell">${contenidoHtml}</div>`;
 }
 
 // --- Asistente de configuración (primera vez) ---
@@ -1988,7 +2330,7 @@ function renderWithScreenEvents() {
 }
 
 async function boot() {
-  app.innerHTML = '<div class="screen"><p class="muted" style="text-align:center;margin-top:40vh;">Cargando tus datos…</p></div>';
+  app.innerHTML = '<div class="screen-shell"><p class="muted" style="text-align:center;">Cargando tus datos…</p></div>';
   render = renderWithScreenEvents;
 
   const estado = await prepararArranque();

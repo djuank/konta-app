@@ -55,12 +55,23 @@ html, body {
   max-width: 480px;
   margin: 0 auto;
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  padding-bottom: 72px;
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
 }
 
 .screen { padding: 1rem 1rem 0.5rem; }
+
+.screen-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: calc(env(safe-area-inset-top) + 24px) 1rem calc(env(safe-area-inset-bottom) + 24px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-sizing: border-box;
+}
 
 h1 { font-size: 20px; font-weight: 500; margin: 0.25rem 0 1rem; }
 h2 { font-size: 15px; font-weight: 500; margin: 0 0 8px; color: var(--text-primary); }
@@ -171,7 +182,7 @@ nav.bottom-nav {
   border-top: 0.5px solid var(--border);
   display: flex;
   justify-content: space-around;
-  padding: 10px 0;
+  padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
 }
 nav.bottom-nav button {
   border: none;
@@ -189,7 +200,7 @@ nav.bottom-nav button i { font-size: 20px; }
 
 .fab {
   position: fixed;
-  bottom: 84px;
+  bottom: calc(84px + env(safe-area-inset-bottom));
   right: max(16px, calc((100vw - 480px) / 2 + 16px));
   width: 52px;
   height: 52px;
@@ -231,7 +242,7 @@ nav.bottom-nav button i { font-size: 20px; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 1rem 0;
+  padding: calc(env(safe-area-inset-top) + 14px) 1rem 0;
 }
 .topbar .wordmark { font-size: 15px; font-weight: 600; letter-spacing: -0.02em; }
 .bell-btn {

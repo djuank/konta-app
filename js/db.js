@@ -87,6 +87,15 @@ function ensureColumnasNuevas() {
     db.run('ALTER TABLE ingresos_fijos ADD COLUMN categoria_id INTEGER REFERENCES categorias(id)');
     persist();
   }
+  const columnasInv = queryAll("PRAGMA table_info(inversiones)").map((c) => c.name);
+  if (!columnasInv.includes('usa_precio_unidad')) {
+    db.run('ALTER TABLE inversiones ADD COLUMN usa_precio_unidad INTEGER NOT NULL DEFAULT 0');
+    persist();
+  }
+  if (!columnasInv.includes('precio_actual_unidad')) {
+    db.run('ALTER TABLE inversiones ADD COLUMN precio_actual_unidad REAL NOT NULL DEFAULT 0');
+    persist();
+  }
   corregirCategoriasFaltantes();
 }
 
@@ -193,6 +202,15 @@ export async function replaceDatabase(uint8array) {
 export function run(sql, params = []) {
   db.run(sql, params);
   persist();
+}
+
+// Igual que run(), pero devuelve el id autogenerado de la fila insertada.
+// Útil cuando otra operación necesita enlazarse a lo que se acaba de crear.
+export function runYObtenerId(sql, params = []) {
+  db.run(sql, params);
+  const id = queryOne('SELECT last_insert_rowid() AS id').id;
+  persist();
+  return id;
 }
 
 // Devuelve todas las filas como array de objetos.
