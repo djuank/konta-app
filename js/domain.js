@@ -400,7 +400,16 @@ export function totalIngresosFijos() {
 }
 
 export function totalGastosFijosEsperados() {
-  return queryOne('SELECT COALESCE(SUM(monto_esperado), 0) AS total FROM pagos_fijos WHERE activo = 1').total;
+  const mes = mesActualISO();
+  return queryOne(
+    `SELECT COALESCE(SUM(p.monto_esperado), 0) AS total
+     FROM pagos_fijos p
+     WHERE p.activo = 1
+       AND NOT EXISTS (
+         SELECT 1 FROM pagos_fijos_omitidos o WHERE o.pago_fijo_id = p.id AND o.mes = ?
+       )`,
+    [mes]
+  ).total;
 }
 
 // --- Presupuesto del mes (parametrizado, no histórico) ---

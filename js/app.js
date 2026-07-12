@@ -59,6 +59,7 @@ function navigate(screen) {
 window.navigate = navigate;
 
 function render() {
+  app.style.paddingBottom = '';
   let html = '';
   if (currentScreen === 'inicio') html = screenInicio();
   else if (currentScreen === 'movimientos') html = screenMovimientos();
@@ -2008,6 +2009,7 @@ let appBloqueada = false;
 let securityConfigCache = null; // copia en memoria para poder leerla sin await en render()
 
 function screenShell(contenidoHtml) {
+  app.style.paddingBottom = '0';
   app.innerHTML = `<div class="screen-shell">${contenidoHtml}</div>`;
 }
 
@@ -2330,6 +2332,7 @@ function renderWithScreenEvents() {
 }
 
 async function boot() {
+  app.style.paddingBottom = '0';
   app.innerHTML = '<div class="screen-shell"><p class="muted" style="text-align:center;">Cargando tus datos…</p></div>';
   render = renderWithScreenEvents;
 
