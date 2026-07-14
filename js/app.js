@@ -219,9 +219,18 @@ function screenInicio() {
     <h1>Inicio</h1>
     <div class="card">
       ${plan.haySobrante ? `
-        <p class="label" style="margin-bottom:2px;">Te queda libre este mes</p>
-        <p class="hero-number pos">${fmt(plan.restante)}</p>
-        <p class="muted" style="margin:2px 0 14px;">después de cubrir todo lo del mes</p>
+        <p class="label" style="margin-bottom:2px;">Disponible real hoy</p>
+        <p class="hero-number ${plan.disponibleReal >= 0 ? 'pos' : 'neg'}">${fmt(plan.disponibleReal)}</p>
+        <p class="muted" style="margin:2px 0 10px;">de tu plan de ${fmt(plan.restante)} para este mes</p>
+        ${(() => {
+          const usado = plan.restante > 0 ? Math.min(100, Math.max(0, (plan.gastoVariable / plan.restante) * 100)) : 0;
+          const barraColor = plan.disponibleReal < 0 ? 'var(--danger-text)' : usado > 80 ? 'var(--warning-text, #b8860b)' : 'var(--accent)';
+          return `
+        <div style="height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden;margin-bottom:14px;">
+          <div style="height:100%;width:${usado}%;background:${barraColor};border-radius:3px;"></div>
+        </div>`;
+        })()}
+        <p class="label" style="font-size:11px;margin-bottom:6px;">Tu plan reparte lo libre así:</p>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px;">
           <div class="metric-card">
             <p class="label" style="font-size:11px;">Invertir</p>
@@ -278,9 +287,16 @@ function screenInicio() {
           <span class="muted">Gastos puntuales del mes</span><span style="font-weight:500;" class="neg">−${fmt(plan.puntualesGastos)}</span>
         </div>` : ''}
         <div class="row-between" style="font-size:13px;margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border);">
-          <span style="font-weight:500;">Te queda libre</span><span style="font-weight:600;" class="${plan.haySobrante ? 'pos' : 'neg'}">${fmt(plan.restante)}</span>
+          <span style="font-weight:500;">Tu plan del mes</span><span style="font-weight:600;" class="${plan.haySobrante ? 'pos' : 'neg'}">${fmt(plan.restante)}</span>
         </div>
-        <p class="muted" style="font-size:11px;margin:10px 0 0;">La base (fijos) sale de Ajustes y se repite cada mes. Lo extra y lo puntual solo cuentan este mes.</p>
+        ${plan.gastoVariable > 0 ? `
+        <div class="row-between" style="font-size:13px;margin-top:6px;">
+          <span class="muted">Ya gastaste (día a día)</span><span style="font-weight:500;" class="neg">−${fmt(plan.gastoVariable)}</span>
+        </div>
+        <div class="row-between" style="font-size:13px;margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border);">
+          <span style="font-weight:500;">Disponible real hoy</span><span style="font-weight:600;" class="${plan.disponibleReal >= 0 ? 'pos' : 'neg'}">${fmt(plan.disponibleReal)}</span>
+        </div>` : ''}
+        <p class="muted" style="font-size:11px;margin:10px 0 0;">Tu plan (fijos + ajustes) sale de arriba. El "día a día" son tus gastos variables de Movimientos, y son los que bajan lo que te queda libre hoy.</p>
       </div>` : ''}` : ''}
     </div>
 

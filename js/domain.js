@@ -459,6 +459,23 @@ export function totalIngresosFijosEfectivos() {
   }, 0);
 }
 
+// Gasto VARIABLE del mes: lo que has gastado en el día a día (mercado,
+// transporte, salidas...) que NO estaba presupuestado. Excluye:
+//   - gastos de pagos fijos (pago_fijo_id): ya están en la proyección
+//   - los puntuales viven en otra tabla, así que no entran aquí
+// Esto es lo que de verdad "come" tu margen libre a medida que avanza el mes.
+export function gastoVariableMesActual() {
+  const r = queryOne(
+    `SELECT COALESCE(SUM(monto), 0) AS total
+     FROM movimientos
+     WHERE tipo = 'gasto'
+       AND pago_fijo_id IS NULL
+       AND date(fecha) >= date('now','start of month')
+       AND date(fecha) <= date('now')`
+  );
+  return r.total;
+}
+
 // --- Presupuesto del mes (parametrizado, no histórico) ---
 // Esto es lo que ya sabes de memoria con tu Excel: si sumas tus ingresos
 // fijos y les restas tus gastos fijos, sabes ANTES de que termine el mes
@@ -481,6 +498,12 @@ export function planGastoConsciente() {
   const ingresosDelMes = ingresosFijos + puntuales.ingresos;
   const gastosDelMes = gastosFijos + puntuales.gastos;
   const restante = ingresosDelMes - gastosDelMes;
+
+  // Lo realmente gastado en el día a día (no presupuestado) hasta hoy.
+  const gastoVariable = gastoVariableMesActual();
+  // Lo que de verdad te queda libre HOY: tu margen proyectado menos lo que
+  // ya te has gastado en gastos variables. Baja a medida que gastas.
+  const disponibleReal = restante - gastoVariable;
 
   const baldes = {
     fijos: Number(getConfig('balde_fijos')),
@@ -509,6 +532,8 @@ export function planGastoConsciente() {
     puntualesGastos: puntuales.gastos,
     ingresosDelMes,
     gastosDelMes,
+    gastoVariable,
+    disponibleReal,
     hayAjustesReales,
     restante,
     haySobrante,
