@@ -222,6 +222,48 @@ export function categorias(tipo) {
   return queryAll('SELECT * FROM categorias WHERE tipo = ? ORDER BY nombre', [tipo]);
 }
 
+export function todasLasCategorias() {
+  return queryAll('SELECT * FROM categorias ORDER BY tipo, nombre');
+}
+
+export function crearCategoria({ nombre, tipo, icono, ingresoTipo }) {
+  run(
+    'INSERT INTO categorias (nombre, tipo, icono, ingreso_tipo) VALUES (?, ?, ?, ?)',
+    [nombre.trim(), tipo, icono || 'ti-circle', tipo === 'ingreso' ? (ingresoTipo || 'activo') : null]
+  );
+}
+
+export function actualizarCategoria(id, { nombre, icono, ingresoTipo }) {
+  const cat = queryOne('SELECT * FROM categorias WHERE id = ?', [id]);
+  if (!cat) return;
+  run(
+    'UPDATE categorias SET nombre = ?, icono = ?, ingreso_tipo = ? WHERE id = ?',
+    [nombre.trim(), icono || cat.icono, cat.tipo === 'ingreso' ? (ingresoTipo || cat.ingreso_tipo || 'activo') : null, id]
+  );
+}
+
+// Cuántas cosas dependen de esta categoría. Antes de borrar, avisamos.
+export function usoDeCategoria(id) {
+  const movs = queryOne('SELECT COUNT(*) AS n FROM movimientos WHERE categoria_id = ?', [id]).n;
+  const pagos = queryOne('SELECT COUNT(*) AS n FROM pagos_fijos WHERE categoria_id = ?', [id]).n;
+  const ingresos = queryOne('SELECT COUNT(*) AS n FROM ingresos_fijos WHERE categoria_id = ?', [id]).n;
+  return { movimientos: movs, pagosFijos: pagos, ingresosFijos: ingresos, total: movs + pagos + ingresos };
+}
+
+// Borra una categoría reasignando lo que dependa de ella a otra categoría
+// destino (para no dejar movimientos huérfanos, que romperían los JOIN).
+export function eliminarCategoria(id, categoriaDestinoId) {
+  const uso = usoDeCategoria(id);
+  if (uso.total > 0) {
+    if (!categoriaDestinoId) return { ok: false, motivo: 'en_uso', uso };
+    run('UPDATE movimientos SET categoria_id = ? WHERE categoria_id = ?', [categoriaDestinoId, id]);
+    run('UPDATE pagos_fijos SET categoria_id = ? WHERE categoria_id = ?', [categoriaDestinoId, id]);
+    run('UPDATE ingresos_fijos SET categoria_id = ? WHERE categoria_id = ?', [categoriaDestinoId, id]);
+  }
+  run('DELETE FROM categorias WHERE id = ?', [id]);
+  return { ok: true };
+}
+
 // --- Pagos fijos mensuales (ej. seguridad social, arriendo, servicios) ---
 // La idea: en vez de tener que recordar de memoria qué pagos fijos tienes
 // cada mes, los registras una vez y la app te muestra cuáles ya pagaste

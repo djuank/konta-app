@@ -326,3 +326,10 @@ a { color: var(--text-primary); }
   color: var(--on-accent);
   border-color: var(--accent);
 }
+
+/* Selector de ícono en el modal de categorías */
+.icono-opcion.icono-activo {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+}
+.icono-opcion.icono-activo i { color: var(--on-accent); }

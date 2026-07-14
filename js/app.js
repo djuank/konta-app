@@ -772,6 +772,160 @@ function openModalDetallePagoFijo(pagoInicial) {
   renderContenido();
 }
 
+// ---------- Categorías: gestión ----------
+
+const ICONOS_CATEGORIA = [
+  'ti-circle', 'ti-home', 'ti-shopping-cart', 'ti-car', 'ti-bolt', 'ti-device-tv',
+  'ti-heart', 'ti-pizza', 'ti-coffee', 'ti-shirt', 'ti-gift', 'ti-plane',
+  'ti-book', 'ti-briefcase', 'ti-cash', 'ti-coin', 'ti-building-bank', 'ti-pig-money',
+  'ti-medical-cross', 'ti-paw', 'ti-school', 'ti-tools', 'ti-wifi', 'ti-phone',
+];
+
+function renderCategoriasAgrupadas() {
+  const cats = domain.todasLasCategorias();
+  const gastos = cats.filter((c) => c.tipo === 'gasto');
+  const ingresos = cats.filter((c) => c.tipo === 'ingreso');
+  function grupo(titulo, lista) {
+    if (lista.length === 0) return '';
+    return `
+      <p class="label" style="font-size:11px;margin:6px 0 4px;">${titulo}</p>
+      ${lista.map((c) => `
+        <div class="list-item" data-categoria-row="${c.id}" style="cursor:pointer;">
+          <div class="icon-badge"><i class="ti ${c.icono}" aria-hidden="true"></i></div>
+          <div style="flex:1;min-width:0;">
+            <p style="margin:0;font-weight:500;">${c.nombre}</p>
+          </div>
+          <i class="ti ti-chevron-right" style="color:var(--text-secondary);font-size:16px;" aria-hidden="true"></i>
+        </div>
+      `).join('')}
+    `;
+  }
+  return grupo('Gastos', gastos) + grupo('Ingresos', ingresos);
+}
+
+function openModalCategoria(categoriaId) {
+  const esEdicion = !!categoriaId;
+  const cat = esEdicion ? domain.todasLasCategorias().find((c) => c.id === categoriaId) : null;
+  let tipo = cat ? cat.tipo : 'gasto';
+  let iconoSel = cat ? cat.icono : 'ti-circle';
+  let ingresoTipo = cat ? (cat.ingreso_tipo || 'activo') : 'activo';
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  function iconosGrid() {
+    return ICONOS_CATEGORIA.map((ic) => `
+      <button type="button" class="icono-opcion ${ic === iconoSel ? 'icono-activo' : ''}" data-icono="${ic}" style="padding:8px;border:1px solid var(--border);background:var(--surface-1);border-radius:8px;cursor:pointer;">
+        <i class="ti ${ic}" style="font-size:18px;" aria-hidden="true"></i>
+      </button>`).join('');
+  }
+
+  function pintar() {
+    overlay.innerHTML = `
+      <div class="modal-sheet">
+        <div class="row-between" style="margin-bottom:14px;">
+          <h2 style="margin:0;">${esEdicion ? 'Editar categoría' : 'Nueva categoría'}</h2>
+          <button class="icon-btn" id="modal-close" aria-label="Cerrar"><i class="ti ti-x" aria-hidden="true"></i></button>
+        </div>
+        ${!esEdicion ? `
+        <div class="field">
+          <label>Tipo</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <button type="button" class="seg-btn ${tipo === 'gasto' ? 'seg-activo' : ''}" data-tipo="gasto">Gasto</button>
+            <button type="button" class="seg-btn ${tipo === 'ingreso' ? 'seg-activo' : ''}" data-tipo="ingreso">Ingreso</button>
+          </div>
+        </div>` : ''}
+        <div class="field">
+          <label>Nombre</label>
+          <input type="text" id="cat-nombre" value="${cat ? cat.nombre.replace(/"/g, '&quot;') : ''}" placeholder="Ej. Mercado, Mascota, Freelance" />
+          <p class="muted" id="cat-nombre-error" style="display:none;color:var(--danger-text);margin:4px 0 0;">Escribe un nombre.</p>
+        </div>
+        ${tipo === 'ingreso' ? `
+        <div class="field">
+          <label>¿Ingreso activo o pasivo?</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <button type="button" class="seg-btn ${ingresoTipo === 'activo' ? 'seg-activo' : ''}" data-ingtipo="activo">Activo (trabajo)</button>
+            <button type="button" class="seg-btn ${ingresoTipo === 'pasivo' ? 'seg-activo' : ''}" data-ingtipo="pasivo">Pasivo (rinde solo)</button>
+          </div>
+        </div>` : ''}
+        <div class="field">
+          <label>Ícono</label>
+          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;">${iconosGrid()}</div>
+        </div>
+        <button class="primary" id="cat-guardar" style="width:100%;margin-bottom:${esEdicion ? '8px' : '0'};">${esEdicion ? 'Guardar cambios' : 'Crear categoría'}</button>
+        ${esEdicion ? '<button id="cat-eliminar" style="width:100%;color:var(--danger-text);"><i class="ti ti-trash" aria-hidden="true"></i> Eliminar categoría</button>' : ''}
+      </div>
+    `;
+    overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
+    overlay.querySelectorAll('[data-tipo]').forEach((b) => b.addEventListener('click', () => { tipo = b.dataset.tipo; pintar(); }));
+    overlay.querySelectorAll('[data-ingtipo]').forEach((b) => b.addEventListener('click', () => { ingresoTipo = b.dataset.ingtipo; pintar(); }));
+    overlay.querySelectorAll('[data-icono]').forEach((b) => b.addEventListener('click', () => { iconoSel = b.dataset.icono; pintar(); }));
+    overlay.querySelector('#cat-guardar').addEventListener('click', () => {
+      const nombre = overlay.querySelector('#cat-nombre').value.trim();
+      if (!nombre) { overlay.querySelector('#cat-nombre-error').style.display = 'block'; return; }
+      if (esEdicion) {
+        domain.actualizarCategoria(categoriaId, { nombre, icono: iconoSel, ingresoTipo });
+      } else {
+        domain.crearCategoria({ nombre, tipo, icono: iconoSel, ingresoTipo });
+      }
+      overlay.remove();
+      render();
+    });
+    const btnEliminar = overlay.querySelector('#cat-eliminar');
+    if (btnEliminar) btnEliminar.addEventListener('click', () => confirmarEliminarCategoria(categoriaId, cat, overlay));
+  }
+
+  pintar();
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+}
+
+function confirmarEliminarCategoria(id, cat, overlayPadre) {
+  const uso = domain.usoDeCategoria(id);
+  if (uso.total === 0) {
+    if (confirm(`¿Eliminar la categoría "${cat.nombre}"?`)) {
+      domain.eliminarCategoria(id);
+      overlayPadre.remove();
+      render();
+    }
+    return;
+  }
+  // Está en uso: pedir categoría destino para reasignar.
+  const mismoTipo = domain.categorias(cat.tipo).filter((c) => c.id !== id);
+  if (mismoTipo.length === 0) {
+    alert(`No puedes eliminar "${cat.nombre}" porque tiene movimientos y no hay otra categoría de ${cat.tipo} a la cual moverlos. Crea otra primero.`);
+    return;
+  }
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-sheet">
+      <div class="row-between" style="margin-bottom:14px;">
+        <h2 style="margin:0;">Mover y eliminar</h2>
+        <button class="icon-btn" id="modal-close" aria-label="Cerrar"><i class="ti ti-x" aria-hidden="true"></i></button>
+      </div>
+      <p class="muted" style="margin-bottom:14px;">"${cat.nombre}" tiene ${uso.total} registro${uso.total === 1 ? '' : 's'} asociado${uso.total === 1 ? '' : 's'}. Elige a qué categoría moverlos antes de eliminar.</p>
+      <div class="field">
+        <label>Mover todo a</label>
+        <select id="cat-destino">
+          ${mismoTipo.map((c) => `<option value="${c.id}">${c.nombre}</option>`).join('')}
+        </select>
+      </div>
+      <button class="primary" id="cat-confirmar-mover" style="width:100%;color:var(--danger-text);">Mover y eliminar "${cat.nombre}"</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#cat-confirmar-mover').addEventListener('click', () => {
+    const destino = Number(overlay.querySelector('#cat-destino').value);
+    domain.eliminarCategoria(id, destino);
+    overlay.remove();
+    if (overlayPadre) overlayPadre.remove();
+    render();
+  });
+}
+
 // ---------- Modal: agregar movimiento puntual del mes ----------
 
 function openModalPuntual() {
@@ -1929,6 +2083,15 @@ function screenConfiguracion() {
         renderPagosFijosAjustesAgrupados(pagosFijos)}
     </div>
 
+    <div class="row-between">
+      <h2 style="margin-bottom:0;">Categorías</h2>
+      <button class="icon-btn" id="btn-add-categoria" aria-label="Agregar categoría"><i class="ti ti-plus" aria-hidden="true"></i></button>
+    </div>
+    <div class="card">
+      <p class="muted" style="margin-bottom:10px;">Organiza tus gastos e ingresos a tu manera. Toca una para editarla.</p>
+      ${renderCategoriasAgrupadas()}
+    </div>
+
     <h2>Seguridad</h2>
     <div class="card">
       ${securityConfigCache ? `
@@ -1985,6 +2148,12 @@ function attachConfiguracionEvents() {
       const pago = domain.listaPagosFijos().find((p) => p.id === Number(btn.dataset.editPagoFijo));
       if (pago) openModalPagoFijo(pago);
     });
+  });
+
+  const btnAddCategoria = document.getElementById('btn-add-categoria');
+  if (btnAddCategoria) btnAddCategoria.addEventListener('click', () => openModalCategoria());
+  document.querySelectorAll('[data-categoria-row]').forEach((row) => {
+    row.addEventListener('click', () => openModalCategoria(Number(row.dataset.categoriaRow)));
   });
 
   const btnExportSqlite = document.getElementById('btn-export-sqlite');
@@ -2045,6 +2214,7 @@ function attachConfiguracionEvents() {
     const config = await loadSecurityConfig();
     config.biometria = null;
     await saveSecurityConfig(config);
+    await security.olvidarLlaveDispositivo();
     await actualizarCacheSeguridad();
     render();
   });
@@ -2122,19 +2292,22 @@ async function activarFaceIdDesdeAjustes() {
   if (!llave) { alert('PIN incorrecto.'); return; }
 
   const credId = await security.registrarBiometria('konta-usuario');
-  if (!credId) return;
-  const deviceKey = await security.generarLlaveMaestra();
-  const rawDeviceKey = await crypto.subtle.exportKey('raw', deviceKey);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const wrapped = await crypto.subtle.wrapKey('raw', llave, deviceKey, { name: 'AES-GCM', iv });
-  config.biometria = {
-    credentialId: credId,
-    deviceKeyRaw: btoa(String.fromCharCode(...new Uint8Array(rawDeviceKey))),
-    iv: btoa(String.fromCharCode(...iv)),
-    wrapped: btoa(String.fromCharCode(...new Uint8Array(wrapped))),
-  };
-  await saveSecurityConfig(config);
-  await actualizarCacheSeguridad();
+  if (!credId) { alert('No se pudo registrar Face ID. Intenta de nuevo.'); return; }
+  try {
+    // La llave que desenvuelve queda como CryptoKey no exportable en
+    // IndexedDB; en config solo guardamos la envoltura (iv + wrapped).
+    const envoltura = await security.envolverLlaveConDispositivo(llave);
+    config.biometria = {
+      credentialId: credId,
+      iv: envoltura.iv,
+      wrapped: envoltura.wrapped,
+    };
+    await saveSecurityConfig(config);
+    await actualizarCacheSeguridad();
+    alert('Face ID / Touch ID activado. Tu PIN sigue funcionando como respaldo.');
+  } catch (e) {
+    alert('No se pudo activar Face ID: ' + (e.message || e));
+  }
   render();
 }
 
@@ -2270,20 +2443,25 @@ function asistenteSeguridad(onTerminado) {
         </div>
       `);
       document.getElementById('btn-activar-faceid').addEventListener('click', async () => {
-        const credId = await security.registrarBiometria('konta-usuario');
-        if (credId) {
-          const deviceKey = await security.generarLlaveMaestra();
-          const rawDeviceKey = await crypto.subtle.exportKey('raw', deviceKey);
-          const iv = crypto.getRandomValues(new Uint8Array(12));
-          const wrapped = await crypto.subtle.wrapKey('raw', masterKeyTemp, deviceKey, { name: 'AES-GCM', iv });
-          const config = await loadSecurityConfig();
-          config.biometria = {
-            credentialId: credId,
-            deviceKeyRaw: btoa(String.fromCharCode(...new Uint8Array(rawDeviceKey))),
-            iv: btoa(String.fromCharCode(...iv)),
-            wrapped: btoa(String.fromCharCode(...new Uint8Array(wrapped))),
-          };
-          await saveSecurityConfig(config);
+        const btn = document.getElementById('btn-activar-faceid');
+        btn.disabled = true;
+        try {
+          const credId = await security.registrarBiometria('konta-usuario');
+          if (credId) {
+            // Guardamos SOLO la envoltura (iv + wrapped). La llave que
+            // desenvuelve queda como CryptoKey no exportable en IndexedDB,
+            // nunca en texto plano.
+            const envoltura = await security.envolverLlaveConDispositivo(masterKeyTemp);
+            const config = await loadSecurityConfig();
+            config.biometria = {
+              credentialId: credId,
+              iv: envoltura.iv,
+              wrapped: envoltura.wrapped,
+            };
+            await saveSecurityConfig(config);
+          }
+        } catch (e) {
+          alert('No se pudo activar Face ID. Podrás activarlo luego desde Configuración. Tu PIN sigue funcionando.');
         }
         paso = 'listo';
         render();
@@ -2314,19 +2492,34 @@ function pantallaBloqueo(onDesbloqueado) {
 
   async function intentarBiometria(config) {
     if (!config.biometria) return;
-    const ok = await security.verificarBiometria(config.biometria.credentialId);
-    if (!ok) return;
-    try {
-      const rawDeviceKey = fromBase64Local(config.biometria.deviceKeyRaw);
-      const deviceKey = await crypto.subtle.importKey('raw', rawDeviceKey, 'AES-GCM', false, ['unwrapKey']);
-      const iv = fromBase64Local(config.biometria.iv);
-      const wrapped = fromBase64Local(config.biometria.wrapped);
-      const masterKey = await crypto.subtle.unwrapKey(
-        'raw', wrapped, deviceKey, { name: 'AES-GCM', iv },
-        { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']
-      );
-      onDesbloqueado(masterKey);
-    } catch (e) { /* seguimos mostrando el PIN */ }
+    const btnBio = document.getElementById('btn-usar-biometria');
+    const errEl = document.getElementById('bio-error');
+    if (btnBio) { btnBio.disabled = true; btnBio.style.opacity = '0.6'; }
+    const resultado = await security.verificarBiometria(config.biometria.credentialId);
+    if (btnBio) { btnBio.disabled = false; btnBio.style.opacity = '1'; }
+
+    if (resultado !== true) {
+      // Face ID no verificó: mostramos por qué en vez de fallar en silencio.
+      const nombre = resultado && resultado.error ? resultado.error : '';
+      let msg = 'No se pudo usar Face ID. Ingresa tu PIN.';
+      if (nombre === 'NotAllowedError') msg = 'Face ID cancelado o sin permiso. Ingresa tu PIN.';
+      else if (nombre === 'InvalidStateError') msg = 'Este dispositivo no reconoce el registro. Reactiva Face ID desde Configuración.';
+      else if (nombre === 'SecurityError') msg = 'Face ID no disponible en este contexto. Ingresa tu PIN.';
+      if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+      return;
+    }
+
+    // Face ID verificó: ahora sí desenvolvemos con la llave de dispositivo
+    // no exportable guardada en IndexedDB.
+    const masterKey = await security.desenvolverLlaveConDispositivo(config.biometria);
+    if (!masterKey) {
+      if (errEl) {
+        errEl.textContent = 'No se encontró la llave de este dispositivo. Entra con tu PIN y reactiva Face ID.';
+        errEl.style.display = 'block';
+      }
+      return;
+    }
+    onDesbloqueado(masterKey);
   }
 
   function fromBase64Local(b64) {
@@ -2348,7 +2541,7 @@ function pantallaBloqueo(onDesbloqueado) {
             <input type="tel" inputmode="numeric" pattern="[0-9]*" id="pin-desbloqueo" placeholder="PIN" maxlength="6" style="font-size:24px;text-align:center;letter-spacing:8px;" />
           </div>
           <p class="muted" id="pin-desbloqueo-error" style="display:none;color:var(--danger-text);margin-bottom:8px;">PIN incorrecto.</p>
-          ${config.biometria ? '<button class="primary" id="btn-usar-biometria" style="width:100%;margin-bottom:10px;"><i class="ti ti-face-id" aria-hidden="true"></i> Usar Face ID / Touch ID</button>' : ''}
+          ${config.biometria ? '<p id="bio-error" class="muted" style="display:none;color:var(--danger-text);font-size:12px;margin-bottom:8px;"></p><button class="primary" id="btn-usar-biometria" style="width:100%;margin-bottom:10px;"><i class="ti ti-face-id" aria-hidden="true"></i> Usar Face ID / Touch ID</button>' : ''}
           <button class="${config.biometria ? '' : 'primary'}" id="btn-desbloquear" style="width:100%;margin-bottom:10px;">Desbloquear con PIN</button>
           <button id="btn-olvide-pin" style="width:100%;border:none;background:none;color:var(--text-secondary);font-size:12px;">¿Olvidaste tu PIN?</button>
         </div>

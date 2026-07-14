@@ -61,12 +61,22 @@ const SECURITY_KEY = 'security-config';
 export async function loadSecurityConfig() {
   try {
     const db = await openIndexedDb();
-    return await new Promise((resolve, reject) => {
+    const config = await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const req = tx.objectStore(STORE_NAME).get(SECURITY_KEY);
       req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => reject(req.error);
     });
+    // Migración: las credenciales biométricas viejas guardaban la llave en
+    // texto plano (deviceKeyRaw) y usaban un rpId incompatible. Ya no sirven
+    // con el nuevo sistema seguro. Las invalidamos para que la app muestre
+    // "activar Face ID" limpio en vez de un botón que falla en silencio.
+    if (config && config.biometria && config.biometria.deviceKeyRaw) {
+      config.biometria = null;
+      const tx2 = db.transaction(STORE_NAME, 'readwrite');
+      tx2.objectStore(STORE_NAME).put(config, SECURITY_KEY);
+    }
+    return config;
   } catch (e) {
     console.error('No se pudo leer la configuración de seguridad', e);
     return null;
