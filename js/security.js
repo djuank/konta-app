@@ -132,16 +132,29 @@ export async function biometriaDisponible() {
   }
 }
 
+// El rpId debe ser el dominio efectivo (sin puerto, sin esquema). Fijarlo
+// explícitamente es clave en iOS: cuando la app corre como PWA en pantalla
+// completa, si no se especifica rp.id la credencial se registra contra un
+// contexto que luego no coincide al autenticar, y Face ID "no funciona".
+// En localhost, WebAuthn permite 'localhost' como rpId.
+function rpIdActual() {
+  return window.location.hostname;
+}
+
 export async function registrarBiometria(nombreUsuario) {
   const challenge = randomBytes(32);
   const userId = randomBytes(16);
   const cred = await navigator.credentials.create({
     publicKey: {
       challenge,
-      rp: { name: 'Konta' },
+      rp: { name: 'Konta', id: rpIdActual() },
       user: { id: userId, name: nombreUsuario, displayName: nombreUsuario },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
+      authenticatorSelection: {
+        authenticatorAttachment: 'platform',
+        userVerification: 'required',
+        residentKey: 'preferred',
+      },
       timeout: 60000,
     },
   });
@@ -154,7 +167,12 @@ export async function verificarBiometria(credentialIdB64) {
     const cred = await navigator.credentials.get({
       publicKey: {
         challenge,
-        allowCredentials: [{ type: 'public-key', id: fromBase64(credentialIdB64) }],
+        rpId: rpIdActual(),
+        allowCredentials: [{
+          type: 'public-key',
+          id: fromBase64(credentialIdB64),
+          transports: ['internal'],
+        }],
         userVerification: 'required',
         timeout: 60000,
       },

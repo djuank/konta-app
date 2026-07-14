@@ -412,16 +412,75 @@ export function totalGastosFijosEsperados() {
   ).total;
 }
 
+// --- Movimientos puntuales del mes (no fijos) ---
+// Un ingreso extra (trabajo adicional, préstamo que te dieron) o un gasto
+// puntual (una compra) que solo cuentan para el mes actual y no reaparecen.
+// La base del mes (ingresos_fijos y pagos_fijos de Ajustes) no se toca.
+
+export function listaPuntualesMes(mes = mesActualISO()) {
+  return queryAll(
+    'SELECT * FROM movimientos_puntuales WHERE mes = ? ORDER BY creado_en DESC, id DESC',
+    [mes]
+  );
+}
+
+export function agregarPuntual({ tipo, concepto, monto, mes = mesActualISO() }) {
+  run(
+    'INSERT INTO movimientos_puntuales (mes, tipo, concepto, monto, creado_en) VALUES (?, ?, ?, ?, ?)',
+    [mes, tipo, concepto, monto || 0, new Date().toISOString()]
+  );
+}
+
+export function eliminarPuntual(id) {
+  run('DELETE FROM movimientos_puntuales WHERE id = ?', [id]);
+}
+
+export function totalesPuntualesMes(mes = mesActualISO()) {
+  const r = queryOne(
+    `SELECT
+       COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END), 0) AS ingresos,
+       COALESCE(SUM(CASE WHEN tipo = 'gasto'   THEN monto ELSE 0 END), 0) AS gastos
+     FROM movimientos_puntuales WHERE mes = ?`,
+    [mes]
+  );
+  return { ingresos: r.ingresos, gastos: r.gastos };
+}
+
+// Ingresos fijos "efectivos" del mes: por cada ingreso fijo, si ya lo
+// recibiste tomamos lo que REALMENTE recibiste (que puede ser mayor al
+// esperado si te pagaron más); si aún no lo recibes, tomamos el esperado
+// como proyección. Así el presupuesto sube cuando ganas más, sin contar
+// dos veces el salario ni tocar la base parametrizada en Ajustes.
+export function totalIngresosFijosEfectivos() {
+  const estados = estadoIngresosFijosMes();
+  return estados.reduce((sum, i) => {
+    const real = i.recibido && i.movimiento ? i.movimiento.monto : i.monto_esperado;
+    return sum + Math.max(real, i.monto_esperado);
+  }, 0);
+}
+
 // --- Presupuesto del mes (parametrizado, no histórico) ---
 // Esto es lo que ya sabes de memoria con tu Excel: si sumas tus ingresos
 // fijos y les restas tus gastos fijos, sabes ANTES de que termine el mes
 // si te va a sobrar o si vas a quedar en negativo. Si sobra, se reparte
 // entre invertir, ahorrar y disfrutar según tu plan.
+//
+// El presupuesto arranca cada mes desde la base parametrizada en Ajustes
+// (ingresos_fijos − pagos_fijos), pero se AJUSTA con lo real de este mes:
+//   + lo que recibiste de más en tus ingresos fijos
+//   + ingresos puntuales del mes (trabajo extra, un préstamo)
+//   − gastos puntuales del mes (una compra que anotaste)
+// Nada de esto se guarda en Ajustes ni se copia al mes siguiente.
 
 export function planGastoConsciente() {
-  const ingresosFijos = totalIngresosFijos();
+  const ingresosFijosBase = totalIngresosFijos();      // base parametrizada (Ajustes)
+  const ingresosFijos = totalIngresosFijosEfectivos(); // base + lo recibido de más
   const gastosFijos = totalGastosFijosEsperados();
-  const restante = ingresosFijos - gastosFijos;
+  const puntuales = totalesPuntualesMes();
+
+  const ingresosDelMes = ingresosFijos + puntuales.ingresos;
+  const gastosDelMes = gastosFijos + puntuales.gastos;
+  const restante = ingresosDelMes - gastosDelMes;
 
   const baldes = {
     fijos: Number(getConfig('balde_fijos')),
@@ -437,9 +496,20 @@ export function planGastoConsciente() {
   const factor = denominador > 0 ? 1 / denominador : 0;
   const haySobrante = restante > 0;
 
+  const hayAjustesReales =
+    ingresosFijos !== ingresosFijosBase ||
+    puntuales.ingresos > 0 ||
+    puntuales.gastos > 0;
+
   return {
     ingresosFijos,
+    ingresosFijosBase,
     gastosFijos,
+    puntualesIngresos: puntuales.ingresos,
+    puntualesGastos: puntuales.gastos,
+    ingresosDelMes,
+    gastosDelMes,
+    hayAjustesReales,
     restante,
     haySobrante,
     baldes,

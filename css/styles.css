@@ -309,3 +309,20 @@ a { color: var(--text-primary); }
 
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Selector de tipo (ingreso/gasto) en el modal de movimiento puntual */
+.seg-btn {
+  padding: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.seg-btn.seg-activo {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}

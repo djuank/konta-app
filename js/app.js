@@ -186,6 +186,20 @@ function attachGlobalEvents() {
   });
   const btnAddIngresoFijoInicio = document.getElementById('btn-add-ingreso-fijo-inicio');
   if (btnAddIngresoFijoInicio) btnAddIngresoFijoInicio.addEventListener('click', () => openModalIngresoFijo());
+
+  const btnAddPuntual = document.getElementById('btn-add-puntual');
+  if (btnAddPuntual) btnAddPuntual.addEventListener('click', () => openModalPuntual());
+  app.querySelectorAll('[data-puntual-row]').forEach((row) => {
+    row.addEventListener('click', () => {
+      const id = Number(row.dataset.puntualRow);
+      const p = domain.listaPuntualesMes().find((x) => x.id === id);
+      if (!p) return;
+      if (confirm(`¿Eliminar "${p.concepto}"?`)) {
+        domain.eliminarPuntual(id);
+        render();
+      }
+    });
+  });
 }
 
 // ---------- Pantalla: Inicio ----------
@@ -196,6 +210,7 @@ function screenInicio() {
   const ultimos = domain.ultimosMovimientos(4);
   const pagosFijos = domain.estadoPagosFijosMes();
   const ingresosFijos = domain.estadoIngresosFijosMes();
+  const puntuales = domain.listaPuntualesMes();
   const plan = domain.planGastoConsciente();
 
   return `
@@ -222,11 +237,19 @@ function screenInicio() {
     <h2>Presupuesto de este mes</h2>
     <div class="card">
       <div class="row-between" style="font-size:13px;margin-bottom:4px;">
-        <span class="muted">Ingresos fijos</span><span style="font-weight:500;" class="pos">${fmt(plan.ingresosFijos)}</span>
+        <span class="muted">Ingresos fijos${plan.ingresosFijos !== plan.ingresosFijosBase ? ' <span style="color:var(--text-secondary);">(real)</span>' : ''}</span><span style="font-weight:500;" class="pos">${fmt(plan.ingresosFijos)}</span>
       </div>
-      <div class="row-between" style="font-size:13px;margin-bottom:10px;">
+      ${plan.puntualesIngresos > 0 ? `
+      <div class="row-between" style="font-size:13px;margin-bottom:4px;">
+        <span class="muted">+ Ingresos extra del mes</span><span style="font-weight:500;" class="pos">${fmt(plan.puntualesIngresos)}</span>
+      </div>` : ''}
+      <div class="row-between" style="font-size:13px;margin-bottom:${plan.puntualesGastos > 0 ? '4px' : '10px'};">
         <span class="muted">Gastos fijos</span><span style="font-weight:500;" class="neg">${fmt(plan.gastosFijos)}</span>
       </div>
+      ${plan.puntualesGastos > 0 ? `
+      <div class="row-between" style="font-size:13px;margin-bottom:10px;">
+        <span class="muted">+ Gastos puntuales del mes</span><span style="font-weight:500;" class="neg">${fmt(plan.puntualesGastos)}</span>
+      </div>` : ''}
       <div style="border-top:0.5px solid var(--border);padding-top:10px;">
         ${plan.haySobrante ? `
           <p class="label" style="margin-bottom:2px;">Te sobran</p>
@@ -274,10 +297,36 @@ function screenInicio() {
         renderPagosFijosAgrupados(pagosFijos)}
     </div>
 
+    <div class="row-between">
+      <h2 style="margin-bottom:0;">Puntuales de este mes</h2>
+      <button class="icon-btn" id="btn-add-puntual" aria-label="Agregar movimiento puntual"><i class="ti ti-plus" aria-hidden="true"></i></button>
+    </div>
+    <p class="muted" style="font-size:12px;margin:2px 0 8px;">Un ingreso extra o una compra que solo cuentan para este mes. No se repiten.</p>
+    <div class="card">
+      ${puntuales.length === 0 ? emptyState('ti-calendar-plus', 'Nada puntual este mes') :
+        puntuales.map((p) => puntualRow(p)).join('')}
+    </div>
+
     <h2>Últimos movimientos</h2>
     <div class="card">
       ${ultimos.length === 0 ? emptyState('ti-receipt', 'Aún no has registrado movimientos') :
         ultimos.map((m) => movimientoRow(m)).join('')}
+    </div>
+  `;
+}
+
+function puntualRow(p) {
+  const esIngreso = p.tipo === 'ingreso';
+  return `
+    <div class="list-item" data-puntual-row="${p.id}" style="cursor:pointer;">
+      <div class="icon-badge ${esIngreso ? 'success' : 'warning'}">
+        <i class="ti ${esIngreso ? 'ti-arrow-down' : 'ti-arrow-up'}" aria-hidden="true"></i>
+      </div>
+      <div style="flex:1;min-width:0;">
+        <p style="margin:0;font-weight:500;">${p.concepto}</p>
+        <p class="muted" style="margin:0;">${esIngreso ? 'Ingreso extra' : 'Gasto puntual'} · toca para eliminar</p>
+      </div>
+      <span style="font-size:13px;font-weight:500;" class="${esIngreso ? 'pos' : 'neg'}">${esIngreso ? '+' : '−'}${fmt(p.monto)}</span>
     </div>
   `;
 }
@@ -696,6 +745,69 @@ function openModalDetallePagoFijo(pagoInicial) {
 
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   renderContenido();
+}
+
+// ---------- Modal: agregar movimiento puntual del mes ----------
+
+function openModalPuntual() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-sheet">
+      <div class="row-between" style="margin-bottom:14px;">
+        <h2 style="margin:0;">Movimiento puntual</h2>
+        <button class="icon-btn" id="modal-close" aria-label="Cerrar"><i class="ti ti-x" aria-hidden="true"></i></button>
+      </div>
+      <p class="muted" style="margin:0 0 14px;">Solo afecta el presupuesto de este mes. No se repite el mes que viene.</p>
+      <div class="field">
+        <label>¿Qué es?</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <button type="button" class="seg-btn seg-activo" id="pt-tipo-ingreso" data-tipo="ingreso">Ingreso extra</button>
+          <button type="button" class="seg-btn" id="pt-tipo-gasto" data-tipo="gasto">Gasto puntual</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Concepto</label>
+        <input type="text" id="pt-concepto" placeholder="Ej. Trabajo extra, préstamo de Ana, compra de llanta" />
+        <p class="muted" id="pt-concepto-error" style="display:none;color:var(--danger-text);margin:4px 0 0;">Escribe un concepto.</p>
+      </div>
+      <div class="field">
+        <label>Monto</label>
+        <input type="text" inputmode="numeric" id="pt-monto" placeholder="0" />
+        <p class="muted" id="pt-monto-error" style="display:none;color:var(--danger-text);margin:4px 0 0;">Escribe un monto.</p>
+      </div>
+      <button class="primary" id="pt-guardar" style="width:100%;">Agregar</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  activarSeparadorMiles(overlay.querySelector('#pt-monto'));
+
+  let tipo = 'ingreso';
+  const btnIngreso = overlay.querySelector('#pt-tipo-ingreso');
+  const btnGasto = overlay.querySelector('#pt-tipo-gasto');
+  function setTipo(nuevo) {
+    tipo = nuevo;
+    btnIngreso.classList.toggle('seg-activo', nuevo === 'ingreso');
+    btnGasto.classList.toggle('seg-activo', nuevo === 'gasto');
+  }
+  btnIngreso.addEventListener('click', () => setTipo('ingreso'));
+  btnGasto.addEventListener('click', () => setTipo('gasto'));
+
+  overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#pt-guardar').addEventListener('click', () => {
+    const concepto = overlay.querySelector('#pt-concepto').value.trim();
+    const montoInput = overlay.querySelector('#pt-monto');
+    const monto = valorMiles(montoInput);
+    const sinConcepto = !concepto;
+    const sinMonto = !monto || monto <= 0;
+    overlay.querySelector('#pt-concepto-error').style.display = sinConcepto ? 'block' : 'none';
+    overlay.querySelector('#pt-monto-error').style.display = sinMonto ? 'block' : 'none';
+    if (sinConcepto || sinMonto) return;
+    domain.agregarPuntual({ tipo, concepto, monto });
+    overlay.remove();
+    render();
+  });
 }
 
 // ---------- Modal: marcar ingreso fijo como recibido ----------
@@ -2211,8 +2323,8 @@ function pantallaBloqueo(onDesbloqueado) {
             <input type="tel" inputmode="numeric" pattern="[0-9]*" id="pin-desbloqueo" placeholder="PIN" maxlength="6" style="font-size:24px;text-align:center;letter-spacing:8px;" />
           </div>
           <p class="muted" id="pin-desbloqueo-error" style="display:none;color:var(--danger-text);margin-bottom:8px;">PIN incorrecto.</p>
-          <button class="primary" id="btn-desbloquear" style="width:100%;margin-bottom:10px;">Desbloquear</button>
-          ${config.biometria ? '<button id="btn-usar-biometria" style="width:100%;margin-bottom:10px;"><i class="ti ti-face-id" aria-hidden="true"></i> Usar Face ID / Touch ID</button>' : ''}
+          ${config.biometria ? '<button class="primary" id="btn-usar-biometria" style="width:100%;margin-bottom:10px;"><i class="ti ti-face-id" aria-hidden="true"></i> Usar Face ID / Touch ID</button>' : ''}
+          <button class="${config.biometria ? '' : 'primary'}" id="btn-desbloquear" style="width:100%;margin-bottom:10px;">Desbloquear con PIN</button>
           <button id="btn-olvide-pin" style="width:100%;border:none;background:none;color:var(--text-secondary);font-size:12px;">¿Olvidaste tu PIN?</button>
         </div>
       `);
@@ -2236,7 +2348,10 @@ function pantallaBloqueo(onDesbloqueado) {
       if (btnBio) btnBio.addEventListener('click', () => intentarBiometria(config));
       document.getElementById('btn-olvide-pin').addEventListener('click', () => { modo = 'recuperar'; render(); });
 
-      if (config.biometria) intentarBiometria(config);
+      // NO disparamos Face ID automáticamente: iOS bloquea navigator.credentials.get()
+      // si no viene de un gesto directo del usuario (un toque). Antes se llamaba
+      // aquí al renderizar y por eso Face ID "no hacía nada" en el iPhone.
+      // Ahora el usuario toca el botón de arriba y ahí sí se dispara.
     }
 
     else if (modo === 'recuperar') {

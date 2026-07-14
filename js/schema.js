@@ -59,6 +59,20 @@ CREATE TABLE IF NOT EXISTS movimientos (
   ingreso_fijo_id INTEGER REFERENCES ingresos_fijos(id)
 );
 
+-- Movimientos puntuales de UN mes específico: un ingreso extra (trabajo
+-- adicional, un préstamo que te dieron) o un gasto puntual (una compra que
+-- no quieres olvidar). NO son fijos: solo afectan el presupuesto del mes en
+-- que se registran (columna mes = 'YYYY-MM') y NO reaparecen el mes siguiente.
+-- La base de cada mes sigue viniendo solo de ingresos_fijos y pagos_fijos.
+CREATE TABLE IF NOT EXISTS movimientos_puntuales (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mes TEXT NOT NULL,
+  tipo TEXT NOT NULL CHECK (tipo IN ('ingreso','gasto')),
+  concepto TEXT NOT NULL,
+  monto REAL NOT NULL DEFAULT 0,
+  creado_en TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS lo_que_tengo (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   nombre TEXT NOT NULL,
