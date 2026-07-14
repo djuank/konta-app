@@ -213,71 +213,80 @@ function screenInicio() {
   const puntuales = domain.listaPuntualesMes();
   const plan = domain.planGastoConsciente();
 
+  const desgloseAbierto = seccionesAbiertas.has('presupuesto:detalle');
+
   return `
     <h1>Inicio</h1>
     <div class="card">
-      <p class="label">Tu efectivo disponible</p>
-      <p class="hero-number">${fmt(efectivo)}</p>
-      <button id="btn-ver-patrimonio" style="margin-top:6px;padding:0;border:none;background:none;color:var(--text-secondary);font-size:12px;display:flex;align-items:center;gap:2px;">
-        Ver patrimonio total <i class="ti ti-chevron-right" style="font-size:13px;" aria-hidden="true"></i>
-      </button>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0;">
-        <div class="metric-card">
-          <p class="label"><i class="ti ti-arrow-down" style="font-size:13px" aria-hidden="true"></i> Entró este mes</p>
-          <p style="font-size:16px;font-weight:500;margin:0;" class="pos">${fmt(resumenMes.totalIngresos)}</p>
-        </div>
-        <div class="metric-card">
-          <p class="label"><i class="ti ti-arrow-up" style="font-size:13px" aria-hidden="true"></i> Salió este mes</p>
-          <p style="font-size:16px;font-weight:500;margin:0;" class="neg">${fmt(resumenMes.totalGastos)}</p>
-        </div>
-      </div>
-    </div>
-
-    <h2>Presupuesto de este mes</h2>
-    <div class="card">
-      <div class="row-between" style="font-size:13px;margin-bottom:4px;">
-        <span class="muted">Ingresos fijos${plan.ingresosFijos !== plan.ingresosFijosBase ? ' <span style="color:var(--text-secondary);">(real)</span>' : ''}</span><span style="font-weight:500;" class="pos">${fmt(plan.ingresosFijos)}</span>
-      </div>
-      ${plan.puntualesIngresos > 0 ? `
-      <div class="row-between" style="font-size:13px;margin-bottom:4px;">
-        <span class="muted">+ Ingresos extra del mes</span><span style="font-weight:500;" class="pos">${fmt(plan.puntualesIngresos)}</span>
-      </div>` : ''}
-      <div class="row-between" style="font-size:13px;margin-bottom:${plan.puntualesGastos > 0 ? '4px' : '10px'};">
-        <span class="muted">Gastos fijos</span><span style="font-weight:500;" class="neg">${fmt(plan.gastosFijos)}</span>
-      </div>
-      ${plan.puntualesGastos > 0 ? `
-      <div class="row-between" style="font-size:13px;margin-bottom:10px;">
-        <span class="muted">+ Gastos puntuales del mes</span><span style="font-weight:500;" class="neg">${fmt(plan.puntualesGastos)}</span>
-      </div>` : ''}
-      <div style="border-top:0.5px solid var(--border);padding-top:10px;">
-        ${plan.haySobrante ? `
-          <p class="label" style="margin-bottom:2px;">Te sobran</p>
-          <p class="hero-number pos" style="font-size:22px;">${fmt(plan.restante)}</p>
-          <p class="muted" style="margin:2px 0 12px;">después de cubrir tus gastos fijos</p>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
-            <div class="metric-card">
-              <p class="label" style="font-size:11px;">Invertir</p>
-              <p style="font-size:13px;font-weight:500;margin:0;">${fmt(plan.montoInversion)}</p>
-            </div>
-            <div class="metric-card">
-              <p class="label" style="font-size:11px;">Ahorrar</p>
-              <p style="font-size:13px;font-weight:500;margin:0;">${fmt(plan.montoAhorro)}</p>
-            </div>
-            <div class="metric-card">
-              <p class="label" style="font-size:11px;">Disfrutar</p>
-              <p style="font-size:13px;font-weight:500;margin:0;">${fmt(plan.montoDisfrute)}</p>
-            </div>
+      ${plan.haySobrante ? `
+        <p class="label" style="margin-bottom:2px;">Te queda libre este mes</p>
+        <p class="hero-number pos">${fmt(plan.restante)}</p>
+        <p class="muted" style="margin:2px 0 14px;">después de cubrir todo lo del mes</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px;">
+          <div class="metric-card">
+            <p class="label" style="font-size:11px;">Invertir</p>
+            <p style="font-size:14px;font-weight:500;margin:0;">${fmt(plan.montoInversion)}</p>
           </div>
-        ` : plan.gastosFijos > 0 || plan.ingresosFijos > 0 ? `
-          <p class="label" style="margin-bottom:2px;">Vas a quedar corto por</p>
-          <p class="hero-number neg" style="font-size:22px;">${fmt(Math.abs(plan.restante))}</p>
-          <p class="muted" style="margin:2px 0 0;">tus gastos fijos superan tus ingresos fijos este mes</p>
-        ` : `
-          <p class="muted">Parametriza tus ingresos y gastos fijos en Ajustes para ver tu presupuesto del mes.</p>
-        `}
+          <div class="metric-card">
+            <p class="label" style="font-size:11px;">Ahorrar</p>
+            <p style="font-size:14px;font-weight:500;margin:0;">${fmt(plan.montoAhorro)}</p>
+          </div>
+          <div class="metric-card">
+            <p class="label" style="font-size:11px;">Disfrutar</p>
+            <p style="font-size:14px;font-weight:500;margin:0;">${fmt(plan.montoDisfrute)}</p>
+          </div>
+        </div>
+      ` : (plan.gastosDelMes > 0 || plan.ingresosDelMes > 0) ? `
+        <p class="label" style="margin-bottom:2px;">Vas a quedar corto este mes</p>
+        <p class="hero-number neg">${fmt(Math.abs(plan.restante))}</p>
+        <p class="muted" style="margin:2px 0 14px;">tus gastos superan tus ingresos este mes</p>
+      ` : `
+        <p class="label" style="margin-bottom:2px;">Tu presupuesto del mes</p>
+        <p class="muted" style="margin:8px 0 14px;">Parametriza tus ingresos y gastos fijos en Ajustes para verlo.</p>
+      `}
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding-top:12px;border-top:0.5px solid var(--border);">
+        <div>
+          <p class="label" style="font-size:11px;">Efectivo disponible ahora</p>
+          <p style="font-size:15px;font-weight:500;margin:0;">${fmt(efectivo)}</p>
+        </div>
+        <div>
+          <p class="label" style="font-size:11px;">Movido este mes</p>
+          <p style="font-size:15px;font-weight:500;margin:0;"><span class="pos">+${fmt(resumenMes.totalIngresos)}</span> <span class="muted" style="font-size:11px;">/</span> <span class="neg">−${fmt(resumenMes.totalGastos)}</span></p>
+        </div>
       </div>
+
+      ${(plan.gastosDelMes > 0 || plan.ingresosDelMes > 0) ? `
+      <button class="acordeon-header" data-acordeon="presupuesto:detalle" style="margin-top:12px;width:100%;justify-content:space-between;border-bottom:none;">
+        <span style="font-size:12px;color:var(--text-secondary);font-weight:400;">Ver cómo se calcula</span>
+        <i class="ti ti-chevron-${desgloseAbierto ? 'up' : 'down'}" style="font-size:14px;color:var(--text-secondary);" aria-hidden="true"></i>
+      </button>
+      ${desgloseAbierto ? `
+      <div style="padding-top:10px;">
+        <div class="row-between" style="font-size:13px;margin-bottom:4px;">
+          <span class="muted">Ingresos fijos${plan.ingresosFijos !== plan.ingresosFijosBase ? ' <span style="color:var(--text-secondary);">(ya recibiste más)</span>' : ''}</span><span style="font-weight:500;" class="pos">${fmt(plan.ingresosFijos)}</span>
+        </div>
+        ${plan.puntualesIngresos > 0 ? `
+        <div class="row-between" style="font-size:13px;margin-bottom:4px;">
+          <span class="muted">Ingresos extra del mes</span><span style="font-weight:500;" class="pos">+${fmt(plan.puntualesIngresos)}</span>
+        </div>` : ''}
+        <div class="row-between" style="font-size:13px;margin-bottom:4px;">
+          <span class="muted">Gastos fijos</span><span style="font-weight:500;" class="neg">−${fmt(plan.gastosFijos)}</span>
+        </div>
+        ${plan.puntualesGastos > 0 ? `
+        <div class="row-between" style="font-size:13px;margin-bottom:4px;">
+          <span class="muted">Gastos puntuales del mes</span><span style="font-weight:500;" class="neg">−${fmt(plan.puntualesGastos)}</span>
+        </div>` : ''}
+        <div class="row-between" style="font-size:13px;margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border);">
+          <span style="font-weight:500;">Te queda libre</span><span style="font-weight:600;" class="${plan.haySobrante ? 'pos' : 'neg'}">${fmt(plan.restante)}</span>
+        </div>
+        <p class="muted" style="font-size:11px;margin:10px 0 0;">La base (fijos) sale de Ajustes y se repite cada mes. Lo extra y lo puntual solo cuentan este mes.</p>
+      </div>` : ''}` : ''}
     </div>
+
+    <button id="btn-ver-patrimonio" style="margin:-4px 0 4px;padding:6px 0;border:none;background:none;color:var(--text-secondary);font-size:12px;display:flex;align-items:center;gap:2px;">
+      Ver patrimonio total <i class="ti ti-chevron-right" style="font-size:13px;" aria-hidden="true"></i>
+    </button>
 
     <div class="row-between">
       <h2 style="margin-bottom:0;">Ingresos fijos de este mes</h2>
