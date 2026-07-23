@@ -181,22 +181,39 @@ nav.bottom-nav {
   background: var(--surface-1);
   border-top: 0.5px solid var(--border);
   display: flex;
-  justify-content: space-around;
-  padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
+  /* Reparto equitativo: cada pestaña ocupa exactamente 1/6 del ancho.
+     Con space-around las de los extremos quedaban más apretadas. */
+  padding: 6px 0 calc(6px + env(safe-area-inset-bottom));
+  /* Evita que iOS aplique zoom o selección al tocar rápido */
+  -webkit-tap-highlight-color: transparent;
 }
 nav.bottom-nav button {
   border: none;
   background: none;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  font-size: 9px;
+  justify-content: center;
+  gap: 3px;
+  font-size: 10px;
+  line-height: 1.1;
   color: var(--text-muted);
-  padding: 4px 4px;
+  /* Área táctil de 44px de alto, la mínima recomendada en iOS */
+  min-height: 44px;
+  padding: 4px 2px;
+  cursor: pointer;
+}
+nav.bottom-nav button span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 nav.bottom-nav button.active { color: var(--accent); }
-nav.bottom-nav button i { font-size: 20px; }
+nav.bottom-nav button.active i { transform: translateY(-1px); }
+nav.bottom-nav button i { font-size: 21px; transition: transform 0.15s ease; }
 
 .fab {
   position: fixed;
@@ -227,15 +244,103 @@ nav.bottom-nav button i { font-size: 20px; }
   align-items: flex-end;
   justify-content: center;
   z-index: 50;
+  /* Cada modal apilado queda por encima del anterior */
+  animation: overlay-in 0.18s ease;
 }
+/* Modales apilados: el de encima oscurece un poco más y sube de capa */
+.modal-overlay + .modal-overlay { z-index: 60; }
+.modal-overlay + .modal-overlay + .modal-overlay { z-index: 70; }
+
+@keyframes overlay-in {
+  from { background: rgba(0,0,0,0); }
+  to { background: rgba(0,0,0,0.45); }
+}
+@keyframes sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
 .modal-sheet {
   background: var(--surface-1);
   width: 100%;
   max-width: 480px;
   border-radius: 16px 16px 0 0;
-  padding: 1.25rem;
+  /* dvh se ajusta cuando Safari muestra/oculta su barra; vh no.
+     Sin esto el modal queda cortado en el iPhone. */
   max-height: 85vh;
+  max-height: 85dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: sheet-in 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+  /* Respeta el indicador de inicio del iPhone */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Zona de arrastre: la barrita superior para cerrar deslizando */
+.modal-grabber {
+  flex-shrink: 0;
+  padding: 8px 0 4px;
+  display: flex;
+  justify-content: center;
+  cursor: grab;
+  touch-action: none;
+}
+.modal-grabber::before {
+  content: '';
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+/* El contenido scrollea; el encabezado y el pie quedan fijos */
+.modal-body {
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 0 1.25rem 1.25rem;
+  flex: 1;
+}
+.modal-header {
+  flex-shrink: 0;
+  padding: 0.25rem 1.25rem 0.75rem;
+  background: var(--surface-1);
+}
+
+/* Variante pantalla completa, para formularios largos */
+.modal-sheet.modal-full {
+  max-height: 100vh;
+  max-height: 100dvh;
+  height: 100dvh;
+  border-radius: 0;
+  max-width: 480px;
+  padding-top: env(safe-area-inset-top);
+}
+.modal-sheet.modal-full .modal-grabber { display: none; }
+
+/* Cuando el teclado está abierto en iOS, damos aire extra abajo
+   para que el último campo no quede tapado. */
+.modal-body { padding-bottom: max(1.25rem, env(keyboard-inset-height, 0px)); }
+
+/* Compatibilidad: modales que aún no usan .modal-header/.modal-body.
+   Se marcan con .modal-plano desde JS y reciben padding y scroll
+   directamente, para que se vean bien sin reescribirlos todos. */
+.modal-sheet.modal-plano {
+  padding: 0 1.25rem 1.25rem;
+  padding-bottom: max(1.25rem, calc(1.25rem + env(safe-area-inset-bottom)));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  display: block;
+}
+/* El grabber va pegado arriba dentro del modal plano */
+.modal-sheet.modal-plano .modal-grabber {
+  position: sticky;
+  top: 0;
+  background: var(--surface-1);
+  margin: 0 -1.25rem;
+  z-index: 2;
 }
 
 .topbar {

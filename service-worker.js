@@ -1,6 +1,6 @@
 // Service worker: guarda una copia de la app en el dispositivo para que
 // abra sin internet una vez que la visitaste la primera vez.
-const CACHE_NAME = 'konta-app-v8';
+const CACHE_NAME = 'konta-app-v9';
 const ARCHIVOS_BASE = [
   './',
   './index.html',

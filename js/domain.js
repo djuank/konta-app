@@ -763,6 +763,26 @@ export function agregarCompraInversion(inversionId, { fecha, montoInvertido, can
   recalcularTotalesInversion(inversionId);
 }
 
+export function actualizarCompraInversion(compraId, inversionId, { fecha, montoInvertido, cantidad, precioUnidad }) {
+  let monto = montoInvertido;
+  let precio = precioUnidad;
+  if ((monto === undefined || monto === null || monto === '') && cantidad && precio) {
+    monto = cantidad * precio;
+  }
+  if ((precio === undefined || precio === null || precio === '') && cantidad && monto) {
+    precio = cantidad > 0 ? monto / cantidad : null;
+  }
+  run(
+    'UPDATE inversiones_compras SET fecha = ?, monto_invertido = ?, cantidad = ?, precio_unidad = ? WHERE id = ?',
+    [fecha, monto || 0, cantidad || null, precio || null, compraId]
+  );
+  recalcularTotalesInversion(inversionId);
+}
+
+export function obtenerCompraInversion(compraId) {
+  return queryOne('SELECT * FROM inversiones_compras WHERE id = ?', [compraId]);
+}
+
 export function eliminarCompraInversion(id, inversionId) {
   run('DELETE FROM inversiones_compras WHERE id = ?', [id]);
   recalcularTotalesInversion(inversionId);
@@ -780,7 +800,12 @@ export function recalcularTotalesInversion(inversionId) {
     const cantidadTotal = cantidadTotalInversion(inversionId);
     valorActual = cantidadTotal * inv.precio_actual_unidad;
   }
-  run('UPDATE inversiones SET valor_invertido = ?, valor_actual = ? WHERE id = ?', [totalInvertido, valorActual, inversionId]);
+  // Redondeo a 2 decimales: sin esto la aritmética de punto flotante
+  // va dejando colas como 900.0000000000001 que se acumulan.
+  const redondear = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+  run('UPDATE inversiones SET valor_invertido = ?, valor_actual = ? WHERE id = ?', [
+    redondear(totalInvertido), redondear(valorActual), inversionId,
+  ]);
 }
 
 // Activa o desactiva el cálculo automático del valor actual por cantidad × precio.

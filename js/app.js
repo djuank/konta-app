@@ -136,6 +136,161 @@ function abrirPanelNotificaciones() {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 }
 
+// ---------- Sistema de modales ----------
+// Un solo lugar que arregla el comportamiento de TODAS las ventanas
+// superpuestas de la app, sin tener que reescribir cada una:
+//   - barra para deslizar hacia abajo y cerrar (gesto esperado en móvil)
+//   - pantalla completa automática si el formulario es largo
+//   - el campo enfocado siempre visible cuando sube el teclado
+//   - cerrar con la tecla Escape
+//   - bloquear el scroll del fondo mientras el modal está abierto
+
+const ALTURA_PARA_PANTALLA_COMPLETA = 0.72; // 72% de la pantalla
+
+function mejorarModal(overlay) {
+  const sheet = overlay.querySelector('.modal-sheet');
+  if (!sheet || sheet.dataset.mejorado) return;
+  sheet.dataset.mejorado = '1';
+
+  // Si el modal no usa la estructura nueva, se marca como "plano"
+  // para que el CSS le dé padding y scroll correctos.
+  if (!sheet.querySelector('.modal-body')) sheet.classList.add('modal-plano');
+
+  // Barra de arrastre arriba
+  if (!sheet.querySelector('.modal-grabber')) {
+    const grabber = document.createElement('div');
+    grabber.className = 'modal-grabber';
+    grabber.setAttribute('aria-hidden', 'true');
+    sheet.insertBefore(grabber, sheet.firstChild);
+  }
+
+  // Formularios largos → pantalla completa (decidido por contenido real)
+  requestAnimationFrame(() => {
+    const alto = sheet.scrollHeight;
+    const disponible = window.innerHeight;
+    if (alto > disponible * ALTURA_PARA_PANTALLA_COMPLETA) {
+      sheet.classList.add('modal-full');
+    }
+  });
+
+  cerrarConGesto(overlay, sheet);
+  cerrarConEscape(overlay);
+  mantenerCampoVisible(sheet);
+  bloquearFondo();
+  observarCierre(overlay);
+}
+
+// Deslizar hacia abajo para cerrar
+function cerrarConGesto(overlay, sheet) {
+  const grabber = sheet.querySelector('.modal-grabber');
+  if (!grabber) return;
+  let inicioY = 0;
+  let desplazamiento = 0;
+  let arrastrando = false;
+
+  const empezar = (y) => { inicioY = y; arrastrando = true; sheet.style.transition = 'none'; };
+  const mover = (y) => {
+    if (!arrastrando) return;
+    desplazamiento = Math.max(0, y - inicioY);
+    sheet.style.transform = `translateY(${desplazamiento}px)`;
+  };
+  const soltar = () => {
+    if (!arrastrando) return;
+    arrastrando = false;
+    sheet.style.transition = 'transform 0.2s ease';
+    // Si arrastró más de 100px, se cierra; si no, vuelve a su sitio.
+    if (desplazamiento > 100) {
+      sheet.style.transform = 'translateY(100%)';
+      setTimeout(() => overlay.remove(), 180);
+    } else {
+      sheet.style.transform = '';
+    }
+    desplazamiento = 0;
+  };
+
+  grabber.addEventListener('touchstart', (e) => empezar(e.touches[0].clientY), { passive: true });
+  grabber.addEventListener('touchmove', (e) => mover(e.touches[0].clientY), { passive: true });
+  grabber.addEventListener('touchend', soltar);
+  grabber.addEventListener('mousedown', (e) => {
+    empezar(e.clientY);
+    const onMove = (ev) => mover(ev.clientY);
+    const onUp = () => {
+      soltar();
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+function cerrarConEscape(overlay) {
+  const onKey = (e) => {
+    if (e.key === 'Escape') {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+    }
+  };
+  document.addEventListener('keydown', onKey);
+}
+
+// Cuando sube el teclado en iOS, lleva el campo enfocado a la vista.
+function mantenerCampoVisible(sheet) {
+  sheet.querySelectorAll('input, select, textarea').forEach((campo) => {
+    campo.addEventListener('focus', () => {
+      setTimeout(() => {
+        campo.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }, 250);
+    });
+  });
+}
+
+// Evita que el contenido de atrás se mueva mientras hay un modal abierto.
+function bloquearFondo() {
+  if (document.querySelectorAll('.modal-overlay').length === 1) {
+    document.body.dataset.scrollY = String(window.scrollY);
+    document.body.style.overflow = 'hidden';
+  }
+}
+
+function liberarFondo() {
+  if (document.querySelectorAll('.modal-overlay').length === 0) {
+    document.body.style.overflow = '';
+  }
+}
+
+// Detecta cuándo se quita el modal del DOM para liberar el fondo.
+function observarCierre(overlay) {
+  const obs = new MutationObserver(() => {
+    if (!document.body.contains(overlay)) {
+      liberarFondo();
+      obs.disconnect();
+    }
+  });
+  obs.observe(document.body, { childList: true });
+}
+
+// Intercepta la inserción de modales para mejorarlos automáticamente.
+// Así las 14 ventanas existentes se benefician sin reescribir ninguna.
+(function activarMejoraDeModales() {
+  const bodyAppend = document.body.appendChild.bind(document.body);
+  document.body.appendChild = function (nodo) {
+    const resultado = bodyAppend(nodo);
+    if (nodo && nodo.classList && nodo.classList.contains('modal-overlay')) {
+      mejorarModal(nodo);
+      // Algunos modales se vuelven a pintar solos (por ejemplo el detalle
+      // de una inversión al agregar una compra). Cuando eso pasa se pierde
+      // la barra de arrastre, así que la reponemos.
+      const obs = new MutationObserver(() => {
+        const sheet = nodo.querySelector('.modal-sheet');
+        if (sheet && !sheet.dataset.mejorado) mejorarModal(nodo);
+      });
+      obs.observe(nodo, { childList: true, subtree: true });
+    }
+    return resultado;
+  };
+})();
+
 function navBar() {
   const items = [
     { id: 'inicio', icon: 'ti-home', label: 'Inicio' },
@@ -1705,6 +1860,88 @@ function numeroDecimal(texto) {
   return Number.isFinite(n) ? n : 0;
 }
 
+// ---------- Modal: editar una compra del historial DCA ----------
+
+function openModalEditarCompra(compra, inv, alGuardar) {
+  const mon = inv.moneda || 'COP';
+  const esUSD = mon === 'USD';
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-sheet">
+      <div class="row-between" style="margin-bottom:4px;">
+        <h2 style="margin:0;">Editar compra</h2>
+        <button class="icon-btn" id="modal-close" aria-label="Cerrar"><i class="ti ti-x" aria-hidden="true"></i></button>
+      </div>
+      <p class="muted" style="margin:0 0 14px;">${inv.nombre}${esUSD ? ' · USD' : ''}</p>
+
+      <div class="field">
+        <label>Fecha</label>
+        <input type="date" id="ec-fecha" value="${compra.fecha}" />
+      </div>
+      <div class="field">
+        <label>Cantidad comprada</label>
+        <input type="text" inputmode="decimal" id="ec-cantidad" value="${compra.cantidad || ''}" placeholder="Ej: 0.0045" />
+      </div>
+      <div class="field">
+        <label>Precio por unidad${esUSD ? ' (USD)' : ''}</label>
+        <input type="text" inputmode="decimal" id="ec-precio" value="${compra.precio_unidad || ''}" placeholder="Ej: 62000" />
+      </div>
+      <div class="field">
+        <label>Total invertido</label>
+        <input type="text" inputmode="decimal" id="ec-monto" value="${compra.monto_invertido || ''}" placeholder="0" />
+        <p class="muted" style="font-size:11px;margin:6px 0 0;">Si cambias cantidad o precio, el total se recalcula solo.</p>
+      </div>
+      <p class="muted" id="ec-error" style="display:none;color:var(--danger-text);margin:0 0 10px;"></p>
+      <button class="primary" id="ec-guardar" style="width:100%;margin-bottom:8px;">Guardar cambios</button>
+      <button id="ec-eliminar" style="width:100%;color:var(--danger-text);"><i class="ti ti-trash" aria-hidden="true"></i> Eliminar esta compra</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  const inCant = overlay.querySelector('#ec-cantidad');
+  const inPrecio = overlay.querySelector('#ec-precio');
+  const inMonto = overlay.querySelector('#ec-monto');
+  function recalc() {
+    const c = numeroDecimal(inCant.value);
+    const p = numeroDecimal(inPrecio.value);
+    if (c > 0 && p > 0) inMonto.value = String(Number((c * p).toFixed(esUSD ? 2 : 0)));
+  }
+  inCant.addEventListener('input', recalc);
+  inPrecio.addEventListener('input', recalc);
+
+  overlay.querySelector('#ec-guardar').addEventListener('click', () => {
+    const fecha = overlay.querySelector('#ec-fecha').value;
+    const cantidad = numeroDecimal(inCant.value);
+    const precioUnidad = numeroDecimal(inPrecio.value);
+    const monto = numeroDecimal(inMonto.value);
+    const err = overlay.querySelector('#ec-error');
+    if (!fecha) { err.textContent = 'Escribe una fecha.'; err.style.display = 'block'; return; }
+    if ((!cantidad || !precioUnidad) && !monto) {
+      err.textContent = 'Escribe cantidad y precio, o al menos el total invertido.';
+      err.style.display = 'block';
+      return;
+    }
+    domain.actualizarCompraInversion(compra.id, inv.id, {
+      fecha,
+      montoInvertido: monto || null,
+      cantidad: cantidad || null,
+      precioUnidad: precioUnidad || null,
+    });
+    overlay.remove();
+    if (alGuardar) alGuardar();
+  });
+
+  overlay.querySelector('#ec-eliminar').addEventListener('click', () => {
+    if (!confirm('¿Eliminar esta compra? El promedio se recalculará.')) return;
+    domain.eliminarCompraInversion(compra.id, inv.id);
+    overlay.remove();
+    if (alGuardar) alGuardar();
+  });
+}
+
 // ---------- Modal: detalle de una inversión existente (con historial DCA) ----------
 
 function openModalDetalleInversion(invInicial) {
@@ -1796,7 +2033,7 @@ function openModalDetalleInversion(invInicial) {
         ${compras.length > 0 ? `
           <p class="label" style="margin-bottom:6px;">Historial de compras (DCA)</p>
           ${compras.map((c) => `
-            <div class="list-item">
+            <div class="list-item" data-editar-compra="${c.id}" style="cursor:pointer;">
               <div class="icon-badge neutral" style="width:26px;height:26px;"><i class="ti ti-shopping-cart" style="font-size:13px;" aria-hidden="true"></i></div>
               <div style="flex:1;min-width:0;">
                 <p style="font-size:13px;margin:0;">${c.fecha}</p>
@@ -1805,7 +2042,7 @@ function openModalDetalleInversion(invInicial) {
                 </p>
               </div>
               <span style="font-size:13px;font-weight:500;margin-right:6px;">${fmtMoneda(c.monto_invertido, mon)}</span>
-              <button class="icon-btn" data-eliminar-compra="${c.id}" aria-label="Eliminar compra"><i class="ti ti-trash" style="font-size:15px;" aria-hidden="true"></i></button>
+              <i class="ti ti-pencil" style="color:var(--text-secondary);font-size:15px;" aria-hidden="true"></i>
             </div>
           `).join('')}
           <div style="height:10px;"></div>
@@ -1895,13 +2132,10 @@ function openModalDetalleInversion(invInicial) {
       render();
     });
 
-    overlay.querySelectorAll('[data-eliminar-compra]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        if (confirm('¿Eliminar esta compra?')) {
-          domain.eliminarCompraInversion(Number(btn.dataset.eliminarCompra), inv.id);
-          renderContenido();
-          render();
-        }
+    overlay.querySelectorAll('[data-editar-compra]').forEach((row) => {
+      row.addEventListener('click', () => {
+        const compra = domain.obtenerCompraInversion(Number(row.dataset.editarCompra));
+        if (compra) openModalEditarCompra(compra, inv, () => { renderContenido(); render(); });
       });
     });
 
