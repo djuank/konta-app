@@ -6,6 +6,7 @@ import {
 import * as domain from './domain.js';
 import { TIPOS_INVERSION } from './schema.js';
 import * as security from './security.js';
+import * as precios from './precios.js';
 import {
   downloadDatabaseFile, downloadJsonExport, pickFile, readFileAsUint8Array,
   loadSecurityConfig, saveSecurityConfig, clearSecurityConfig,
@@ -18,6 +19,24 @@ let seccionesAbiertas = new Set(); // categorías desplegadas en los acordeones
 
 const fmt = (v) => '$' + Math.round(v || 0).toLocaleString('es-CO');
 const pct = (v) => Math.round(v || 0) + '%';
+
+// Formatea en la moneda del activo. Los precios en USD necesitan decimales
+// (un BTC a 62.000,50) y las cantidades de cripto muchos más (0.00234 BTC).
+function fmtMoneda(v, moneda, decimales) {
+  const n = v || 0;
+  const dec = decimales !== undefined ? decimales : (moneda === 'USD' ? 2 : 0);
+  const texto = n.toLocaleString('es-CO', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  return moneda === 'USD' ? 'US$' + texto : '$' + texto;
+}
+
+// Cantidades de activos: cripto necesita precisión, acciones no tanto.
+function fmtCantidad(v) {
+  const n = v || 0;
+  if (n === 0) return '0';
+  if (n < 1) return n.toLocaleString('es-CO', { maximumFractionDigits: 8 });
+  if (n < 1000) return n.toLocaleString('es-CO', { maximumFractionDigits: 4 });
+  return n.toLocaleString('es-CO', { maximumFractionDigits: 2 });
+}
 
 // Formatea un input de dinero mientras el usuario escribe (1500000 -> 1.500.000),
 // conservando la posición del cursor, y da una función para leer el número real.
@@ -1276,8 +1295,13 @@ function tipoInversionInfo(tipoId) {
 function screenInversiones() {
   const inversiones = domain.listaInversiones();
   const total = domain.totalInvertido();
+  const aportado = domain.totalCostoInvertido();
   const rentabilidad = domain.rentabilidadTotalPortafolio();
   const distribucion = domain.distribucionInversionesPorTipo();
+  const trm = domain.obtenerTRM();
+  const trmFecha = domain.obtenerTRMFecha();
+  const hayUSD = inversiones.some((i) => i.moneda === 'USD');
+  const ganancia = total - aportado;
 
   const donutGradient = buildDonutGradient(distribucion);
 
@@ -1288,13 +1312,36 @@ function screenInversiones() {
     </div>
 
     <div class="card">
-      <p class="label">Total invertido</p>
+      <p class="label">Valor de mercado hoy</p>
       <p class="hero-number" style="font-size:24px;">${fmt(total)}</p>
-      ${total > 0 ? `<p class="muted ${rentabilidad >= 0 ? 'pos' : 'neg'}">
-        <i class="ti ${rentabilidad >= 0 ? 'ti-arrow-up' : 'ti-arrow-down'}" aria-hidden="true"></i>
-        ${rentabilidad.toFixed(1)}% desde que invertiste
-      </p>` : ''}
+      ${aportado > 0 ? `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;padding-top:12px;border-top:0.5px solid var(--border);">
+          <div>
+            <p class="label" style="font-size:11px;">Capital aportado</p>
+            <p style="font-size:15px;font-weight:500;margin:0;">${fmt(aportado)}</p>
+          </div>
+          <div>
+            <p class="label" style="font-size:11px;">Ganancia / pérdida</p>
+            <p style="font-size:15px;font-weight:500;margin:0;" class="${ganancia >= 0 ? 'pos' : 'neg'}">${ganancia >= 0 ? '+' : ''}${fmt(ganancia)} <span style="font-size:12px;">(${rentabilidad >= 0 ? '+' : ''}${rentabilidad.toFixed(1)}%)</span></p>
+          </div>
+        </div>
+        <p class="muted" style="font-size:11px;margin:10px 0 0;">El capital aportado es lo que has puesto de tu bolsillo: solo sube cuando inviertes. El valor de mercado sube y baja con los precios.</p>
+      ` : ''}
     </div>
+
+    ${hayUSD ? `
+    <div class="card">
+      <div class="row-between">
+        <div style="flex:1;min-width:0;">
+          <p class="label" style="font-size:11px;margin-bottom:2px;">Tasa de cambio (TRM)</p>
+          <p style="font-size:15px;font-weight:500;margin:0;">${trm > 0 ? `$${trm.toLocaleString('es-CO', { maximumFractionDigits: 2 })} por USD` : 'Sin definir'}</p>
+          <p class="muted" style="font-size:11px;margin:2px 0 0;">${trm > 0 ? (trmFecha ? `Actualizada ${tiempoRelativo(trmFecha)}` : 'Actualizada manualmente') : 'Necesaria para ver tus activos en USD dentro del patrimonio'}</p>
+        </div>
+        <button class="icon-btn" id="btn-actualizar-trm" aria-label="Actualizar TRM"><i class="ti ti-refresh" aria-hidden="true"></i></button>
+      </div>
+      <p id="trm-error" class="muted" style="display:none;color:var(--danger-text);font-size:12px;margin:8px 0 0;"></p>
+      <button id="btn-trm-manual" style="width:100%;margin-top:10px;font-size:12px;">Escribir TRM a mano</button>
+    </div>` : ''}
 
     ${inversiones.length === 0 ? '' : `
     <div class="card row" style="gap:20px;">
@@ -1315,12 +1362,34 @@ function screenInversiones() {
 
     ${metaCard()}
 
-    <h2>Tus inversiones</h2>
+    <div class="row-between">
+      <h2 style="margin-bottom:0;">Tus inversiones</h2>
+      ${inversiones.some((i) => i.coingecko_id) ? '<button class="icon-btn" id="btn-actualizar-precios" aria-label="Actualizar precios"><i class="ti ti-refresh" aria-hidden="true"></i></button>' : ''}
+    </div>
+    <p id="precios-error" class="muted" style="display:none;color:var(--danger-text);font-size:12px;margin:4px 0;"></p>
     <div class="card">
       ${inversiones.length === 0 ? emptyState('ti-chart-pie', 'Aún no has agregado ninguna inversión') :
         inversiones.map((inv) => inversionRow(inv)).join('')}
     </div>
   `;
+}
+
+// "hace 3 horas", "hace 2 días" — para que nunca confundas un precio
+// viejo con el de hoy.
+function tiempoRelativo(fechaISO) {
+  if (!fechaISO) return '';
+  const then = new Date(fechaISO).getTime();
+  if (!Number.isFinite(then)) return '';
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return 'hace un momento';
+  if (mins < 60) return `hace ${mins} min`;
+  const horas = Math.floor(mins / 60);
+  if (horas < 24) return `hace ${horas} h`;
+  const dias = Math.floor(horas / 24);
+  if (dias === 1) return 'ayer';
+  if (dias < 30) return `hace ${dias} días`;
+  const meses = Math.floor(dias / 30);
+  return `hace ${meses} mes${meses !== 1 ? 'es' : ''}`;
 }
 
 function formatTiempo(meses) {
@@ -1380,15 +1449,18 @@ function metaCard() {
 function inversionRow(inv) {
   const rent = domain.rentabilidadInversion(inv);
   const info = tipoInversionInfo(inv.tipo);
+  const esUSD = inv.moneda === 'USD';
+  const valorCOP = domain.aCOP(inv.valor_actual, inv.moneda);
   return `
     <div class="list-item" data-inv-id="${inv.id}" style="cursor:pointer;">
       <div class="icon-badge neutral" style="background:${info.color}22;color:${info.color};"><i class="ti ti-chart-pie" aria-hidden="true"></i></div>
-      <div style="flex:1;">
-        <p style="font-size:13px;margin:0;">${inv.nombre}</p>
-        <p class="muted" style="margin:0;">${info.nombre}</p>
+      <div style="flex:1;min-width:0;">
+        <p style="font-size:13px;margin:0;">${inv.nombre}${esUSD ? ' <span class="muted" style="font-size:10px;border:0.5px solid var(--border);border-radius:4px;padding:0 4px;">USD</span>' : ''}</p>
+        <p class="muted" style="margin:0;">${info.nombre}${inv.usa_precio_unidad && inv.precio_actual_unidad ? ` · ${fmtMoneda(inv.precio_actual_unidad, inv.moneda)}` : ''}</p>
       </div>
       <div style="text-align:right;">
-        <p style="font-size:13px;font-weight:500;margin:0;">${fmt(inv.valor_actual)}</p>
+        <p style="font-size:13px;font-weight:500;margin:0;">${esUSD ? fmtMoneda(inv.valor_actual, 'USD') : fmt(inv.valor_actual)}</p>
+        ${esUSD && valorCOP > 0 ? `<p class="muted" style="margin:0;font-size:10px;">${fmt(valorCOP)}</p>` : ''}
         <p class="muted ${rent >= 0 ? 'pos' : 'neg'}" style="margin:0;">${rent >= 0 ? '+' : ''}${rent.toFixed(1)}%</p>
       </div>
     </div>
@@ -1414,6 +1486,81 @@ function attachInversionesEvents() {
       const inv = domain.listaInversiones().find((i) => i.id === Number(row.dataset.invId));
       if (inv) openModalDetalleInversion(inv);
     });
+  });
+
+  // --- Actualizar TRM desde datos.gov.co ---
+  const btnTRM = document.getElementById('btn-actualizar-trm');
+  if (btnTRM) btnTRM.addEventListener('click', async () => {
+    const err = document.getElementById('trm-error');
+    if (err) err.style.display = 'none';
+    btnTRM.disabled = true;
+    btnTRM.innerHTML = '<i class="ti ti-loader-2" aria-hidden="true"></i>';
+    try {
+      const { valor, vigenciaDesde } = await precios.obtenerTRMOficial();
+      domain.guardarTRM(valor, vigenciaDesde || new Date().toISOString());
+      render();
+    } catch (e) {
+      btnTRM.disabled = false;
+      btnTRM.innerHTML = '<i class="ti ti-refresh" aria-hidden="true"></i>';
+      if (err) { err.textContent = precios.mensajeDeError(e); err.style.display = 'block'; }
+    }
+  });
+
+  const btnTRMManual = document.getElementById('btn-trm-manual');
+  if (btnTRMManual) btnTRMManual.addEventListener('click', () => {
+    const actual = domain.obtenerTRM();
+    const txt = prompt('¿Cuántos pesos vale un dólar hoy?', actual > 0 ? String(Math.round(actual)) : '');
+    if (txt === null) return;
+    const valor = parseFloat(String(txt).replace(/[^\d.,]/g, '').replace(/\./g, '').replace(',', '.'));
+    if (!Number.isFinite(valor) || valor <= 0) { alert('Escribe un número válido.'); return; }
+    domain.guardarTRM(valor, new Date().toISOString());
+    render();
+  });
+
+  // --- Actualizar precios de cripto desde CoinGecko ---
+  const btnPrecios = document.getElementById('btn-actualizar-precios');
+  if (btnPrecios) btnPrecios.addEventListener('click', async () => {
+    const err = document.getElementById('precios-error');
+    if (err) err.style.display = 'none';
+    btnPrecios.disabled = true;
+    btnPrecios.innerHTML = '<i class="ti ti-loader-2" aria-hidden="true"></i>';
+    try {
+      const invs = domain.listaInversiones().filter((i) => i.coingecko_id);
+      // Agrupamos por moneda: CoinGecko puede dar el precio en usd o cop.
+      const porMoneda = {};
+      for (const inv of invs) {
+        const m = (inv.moneda || 'COP').toLowerCase();
+        if (!porMoneda[m]) porMoneda[m] = [];
+        porMoneda[m].push(inv);
+      }
+      let actualizadas = 0;
+      const noEncontradas = [];
+      for (const [moneda, lista] of Object.entries(porMoneda)) {
+        const ids = lista.map((i) => i.coingecko_id);
+        const mapa = await precios.obtenerPreciosCripto(ids, moneda);
+        for (const inv of lista) {
+          const precio = mapa[inv.coingecko_id];
+          if (typeof precio === 'number') {
+            domain.actualizarPrecioUnidad(inv.id, precio, new Date().toISOString());
+            actualizadas++;
+          } else {
+            noEncontradas.push(inv.nombre);
+          }
+        }
+      }
+      render();
+      if (noEncontradas.length > 0) {
+        const err2 = document.getElementById('precios-error');
+        if (err2) {
+          err2.textContent = `No se encontró precio para: ${noEncontradas.join(', ')}. Revisa el identificador de CoinGecko o escribe el precio a mano.`;
+          err2.style.display = 'block';
+        }
+      }
+    } catch (e) {
+      btnPrecios.disabled = false;
+      btnPrecios.innerHTML = '<i class="ti ti-refresh" aria-hidden="true"></i>';
+      if (err) { err.textContent = precios.mensajeDeError(e); err.style.display = 'block'; }
+    }
   });
 
   const btnMeta = document.getElementById('btn-set-meta');
@@ -1487,33 +1634,75 @@ function openModalInversion() {
         </select>
       </div>
       <div class="field">
+        <label>¿En qué moneda compras este activo?</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <button type="button" class="seg-btn seg-activo" id="inv-moneda-cop" data-moneda="COP">Pesos (COP)</button>
+          <button type="button" class="seg-btn" id="inv-moneda-usd" data-moneda="USD">Dólares (USD)</button>
+        </div>
+        <p class="muted" style="font-size:11px;margin:6px 0 0;">Cripto, ETFs y bolsa normalmente se compran en USD. Los cálculos se harán en esta moneda.</p>
+      </div>
+      <div class="field">
+        <label>Identificador en CoinGecko <span class="muted">(opcional)</span></label>
+        <input type="text" id="inv-coingecko" placeholder="Ej: bitcoin, ethereum, solana" />
+        <p class="muted" style="font-size:11px;margin:6px 0 0;">Si lo llenas, podrás traer el precio con un botón. Si lo dejas vacío, actualizas el precio a mano.</p>
+      </div>
+      <div class="field">
         <label>Cuánto has invertido en total (costo)</label>
-        <input type="text" inputmode="numeric" id="inv-costo" placeholder="0" />
+        <input type="text" inputmode="decimal" id="inv-costo" placeholder="0" />
       </div>
       <div class="field">
         <label>Cuánto vale hoy</label>
-        <input type="text" inputmode="numeric" id="inv-actual" placeholder="0" />
+        <input type="text" inputmode="decimal" id="inv-actual" placeholder="0" />
       </div>
       <p class="muted" style="margin:-4px 0 12px;">Después de crearla podrás llevar un historial de compras (DCA) tocándola desde la lista.</p>
       <button class="primary" id="inv-guardar" style="width:100%;">Guardar</button>
     </div>
   `;
   document.body.appendChild(overlay);
-  activarSeparadorMiles(overlay.querySelector('#inv-costo'));
-  activarSeparadorMiles(overlay.querySelector('#inv-actual'));
   overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  let monedaSel = 'COP';
+  const btnCOP = overlay.querySelector('#inv-moneda-cop');
+  const btnUSD = overlay.querySelector('#inv-moneda-usd');
+  function setMoneda(m) {
+    monedaSel = m;
+    btnCOP.classList.toggle('seg-activo', m === 'COP');
+    btnUSD.classList.toggle('seg-activo', m === 'USD');
+  }
+  btnCOP.addEventListener('click', () => setMoneda('COP'));
+  btnUSD.addEventListener('click', () => setMoneda('USD'));
 
   overlay.querySelector('#inv-guardar').addEventListener('click', () => {
     const nombre = overlay.querySelector('#inv-nombre').value.trim();
     if (!nombre) { overlay.querySelector('#inv-nombre').focus(); return; }
     const tipo = overlay.querySelector('#inv-tipo').value;
-    const valorInvertido = valorMiles(overlay.querySelector('#inv-costo'));
-    const valorActual = valorMiles(overlay.querySelector('#inv-actual'));
-    domain.agregarInversion({ nombre, tipo, valorInvertido, valorActual });
+    const coingeckoId = overlay.querySelector('#inv-coingecko').value.trim().toLowerCase() || null;
+    const valorInvertido = numeroDecimal(overlay.querySelector('#inv-costo').value);
+    const valorActual = numeroDecimal(overlay.querySelector('#inv-actual').value);
+    domain.agregarInversion({ nombre, tipo, valorInvertido, valorActual, moneda: monedaSel, coingeckoId });
     overlay.remove();
     render();
   });
+}
+
+// Lee un número que puede traer separadores de miles y decimales.
+// Acepta "1.234,56" (formato local) y "1234.56" (formato de exchange).
+function numeroDecimal(texto) {
+  if (texto === null || texto === undefined) return 0;
+  let t = String(texto).trim().replace(/\s/g, '');
+  if (!t) return 0;
+  const tieneComa = t.includes(',');
+  const tienePunto = t.includes('.');
+  if (tieneComa && tienePunto) {
+    // El último separador que aparece es el decimal
+    if (t.lastIndexOf(',') > t.lastIndexOf('.')) t = t.replace(/\./g, '').replace(',', '.');
+    else t = t.replace(/,/g, '');
+  } else if (tieneComa) {
+    t = t.replace(',', '.');
+  }
+  const n = parseFloat(t.replace(/[^\d.-]/g, ''));
+  return Number.isFinite(n) ? n : 0;
 }
 
 // ---------- Modal: detalle de una inversión existente (con historial DCA) ----------
@@ -1527,9 +1716,11 @@ function openModalDetalleInversion(invInicial) {
     const inv = domain.listaInversiones().find((i) => i.id === invInicial.id);
     if (!inv) { overlay.remove(); return; }
     const compras = domain.listaComprasInversion(inv.id);
-    const cantidadTotal = domain.cantidadTotalInversion(inv.id);
-    const rentabilidad = domain.rentabilidadInversion(inv);
+    const pos = domain.resumenPosicion(inv.id);
     const info = tipoInversionInfo(inv.tipo);
+    const mon = inv.moneda || 'COP';
+    const esUSD = mon === 'USD';
+    const trm = domain.obtenerTRM();
 
     overlay.innerHTML = `
       <div class="modal-sheet">
@@ -1537,15 +1728,48 @@ function openModalDetalleInversion(invInicial) {
           <h2 style="margin:0;">${inv.nombre}</h2>
           <button class="icon-btn" id="modal-close" aria-label="Cerrar"><i class="ti ti-x" aria-hidden="true"></i></button>
         </div>
-        <p class="muted" style="margin:0 0 14px;">${info.nombre}</p>
+        <p class="muted" style="margin:0 0 14px;">${info.nombre}${esUSD ? ' · cotiza en USD' : ''}</p>
 
-        <div class="row-between" style="font-size:13px;margin-bottom:4px;">
-          <span class="muted">Total invertido</span><span style="font-weight:500;">${fmt(inv.valor_invertido)}</span>
-        </div>
-        <div class="row-between" style="font-size:13px;margin-bottom:10px;">
-          <span class="muted">Valor actual</span>
-          <span style="font-weight:500;">${fmt(inv.valor_actual)} <span class="${rentabilidad >= 0 ? 'pos' : 'neg'}" style="font-size:12px;">(${rentabilidad >= 0 ? '+' : ''}${rentabilidad.toFixed(1)}%)</span></span>
-        </div>
+        ${pos && pos.cantidad > 0 ? `
+        <div class="card" style="background:var(--surface-2);margin-bottom:14px;">
+          <p class="label" style="font-size:11px;margin-bottom:2px;">Tu posición</p>
+          <p style="font-size:20px;font-weight:500;margin:0 0 2px;">${fmtCantidad(pos.cantidad)} <span style="font-size:13px;" class="muted">unidades</span></p>
+          <p class="muted" style="font-size:11px;margin:0 0 12px;">en ${pos.numeroCompras} compra${pos.numeroCompras !== 1 ? 's' : ''}</p>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div>
+              <p class="label" style="font-size:11px;">Precio promedio</p>
+              <p style="font-size:14px;font-weight:500;margin:0;">${fmtMoneda(pos.precioPromedio, mon, esUSD ? 2 : 0)}</p>
+            </div>
+            <div>
+              <p class="label" style="font-size:11px;">Precio actual</p>
+              <p style="font-size:14px;font-weight:500;margin:0;">${pos.precioActual > 0 ? fmtMoneda(pos.precioActual, mon, esUSD ? 2 : 0) : '—'}</p>
+              ${inv.precio_actualizado_en ? `<p class="muted" style="font-size:10px;margin:0;">${tiempoRelativo(inv.precio_actualizado_en)}</p>` : ''}
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
+            <div>
+              <p class="label" style="font-size:11px;">Invertido</p>
+              <p style="font-size:14px;font-weight:500;margin:0;">${fmtMoneda(pos.invertido, mon)}</p>
+            </div>
+            <div>
+              <p class="label" style="font-size:11px;">Vale hoy</p>
+              <p style="font-size:14px;font-weight:500;margin:0;">${fmtMoneda(pos.valorMercado, mon)}</p>
+            </div>
+          </div>
+
+          <div style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
+            <p class="label" style="font-size:11px;">Ganancia / pérdida</p>
+            <p style="font-size:18px;font-weight:500;margin:0;" class="${pos.ganancia >= 0 ? 'pos' : 'neg'}">
+              ${pos.ganancia >= 0 ? '+' : ''}${fmtMoneda(pos.ganancia, mon)}
+              <span style="font-size:13px;">(${pos.gananciaPct >= 0 ? '+' : ''}${pos.gananciaPct.toFixed(1)}%)</span>
+            </p>
+            ${esUSD ? (trm > 0
+              ? `<p class="muted" style="font-size:11px;margin:6px 0 0;">En pesos: ${fmt(pos.valorMercadoCOP)} · aportaste ${fmt(pos.invertidoCOP)} (TRM ${Math.round(trm).toLocaleString('es-CO')})</p>`
+              : '<p class="muted" style="font-size:11px;margin:6px 0 0;color:var(--warning-text);">Define la TRM para ver el equivalente en pesos y que sume al patrimonio.</p>') : ''}
+          </div>
+        </div>` : ''}
 
         <div style="border-top:0.5px solid var(--border);padding-top:10px;margin-bottom:14px;">
           <div class="field" style="display:flex;align-items:center;gap:8px;margin-bottom:${inv.usa_precio_unidad ? '10px' : '0'};">
@@ -1553,45 +1777,52 @@ function openModalDetalleInversion(invInicial) {
             <label for="inv-usa-precio" style="margin:0;font-size:13px;">Calcular el valor actual solo (cantidad × precio)</label>
           </div>
           ${inv.usa_precio_unidad ? `
-            <p class="muted" style="margin:0 0 6px;">Tienes ${cantidadTotal} unidades en total.</p>
             <div class="field" style="margin-bottom:0;">
-              <label>Precio actual por unidad</label>
-              <input type="text" inputmode="numeric" id="inv-precio-unidad" value="${formatearMiles(inv.precio_actual_unidad)}" />
+              <label>Precio actual por unidad${esUSD ? ' (USD)' : ''}</label>
+              <input type="text" inputmode="decimal" id="inv-precio-unidad" value="${inv.precio_actual_unidad || ''}" placeholder="0" />
             </div>
-            <button id="inv-actualizar-precio" style="width:100%;margin-top:8px;">Actualizar precio</button>
+            <button id="inv-actualizar-precio" style="width:100%;margin-top:8px;">Guardar precio</button>
+            ${inv.coingecko_id ? `<button id="inv-traer-precio" style="width:100%;margin-top:6px;"><i class="ti ti-download" aria-hidden="true"></i> Traer precio de CoinGecko</button>
+            <p id="inv-precio-error" class="muted" style="display:none;color:var(--danger-text);font-size:12px;margin:6px 0 0;"></p>` : ''}
           ` : `
             <div class="field" style="margin-bottom:0;">
-              <label>Valor actual (manual)</label>
-              <input type="text" inputmode="numeric" id="inv-actual-manual" value="${formatearMiles(inv.valor_actual)}" />
+              <label>Valor actual (manual)${esUSD ? ' (USD)' : ''}</label>
+              <input type="text" inputmode="decimal" id="inv-actual-manual" value="${inv.valor_actual || ''}" />
             </div>
             <button id="inv-actualizar-manual" style="width:100%;margin-top:8px;">Actualizar valor</button>
           `}
         </div>
 
         ${compras.length > 0 ? `
-          <p class="label" style="margin-bottom:6px;">Historial de compras</p>
+          <p class="label" style="margin-bottom:6px;">Historial de compras (DCA)</p>
           ${compras.map((c) => `
             <div class="list-item">
               <div class="icon-badge neutral" style="width:26px;height:26px;"><i class="ti ti-shopping-cart" style="font-size:13px;" aria-hidden="true"></i></div>
-              <div style="flex:1;">
+              <div style="flex:1;min-width:0;">
                 <p style="font-size:13px;margin:0;">${c.fecha}</p>
-                ${c.cantidad ? `<p class="muted" style="margin:0;">${c.cantidad} unidades</p>` : ''}
+                <p class="muted" style="margin:0;font-size:11px;">
+                  ${c.cantidad ? fmtCantidad(c.cantidad) + ' u.' : ''}${c.cantidad && c.precio_unidad ? ' × ' : ''}${c.precio_unidad ? fmtMoneda(c.precio_unidad, mon, esUSD ? 2 : 0) : ''}
+                </p>
               </div>
-              <span style="font-size:13px;font-weight:500;margin-right:6px;">${fmt(c.monto_invertido)}</span>
+              <span style="font-size:13px;font-weight:500;margin-right:6px;">${fmtMoneda(c.monto_invertido, mon)}</span>
               <button class="icon-btn" data-eliminar-compra="${c.id}" aria-label="Eliminar compra"><i class="ti ti-trash" style="font-size:15px;" aria-hidden="true"></i></button>
             </div>
           `).join('')}
           <div style="height:10px;"></div>
-        ` : '<p class="muted" style="margin-bottom:10px;">Aún no tienes compras registradas. Si haces DCA (compras periódicas), regístralas aquí y el costo total se calcula solo.</p>'}
+        ` : '<p class="muted" style="margin-bottom:10px;">Aún no tienes compras registradas. Si haces DCA (compras periódicas), regístralas aquí y el promedio se calcula solo.</p>'}
 
         <p class="label" style="margin-bottom:6px;">Registrar una compra</p>
         <div class="field">
-          <label>Cuánto invertiste</label>
-          <input type="text" inputmode="numeric" id="compra-monto" placeholder="0" />
+          <label>Cantidad comprada</label>
+          <input type="text" inputmode="decimal" id="compra-cantidad" placeholder="Ej: 0.0045" />
         </div>
         <div class="field">
-          <label>Cantidad de unidades (opcional)</label>
-          <input type="text" id="compra-cantidad" placeholder="Ej: 0.0045 BTC, 3 acciones" />
+          <label>Precio por unidad${esUSD ? ' (USD)' : ''}</label>
+          <input type="text" inputmode="decimal" id="compra-precio" placeholder="Ej: 62000" />
+        </div>
+        <div class="field">
+          <label>Total invertido <span class="muted">(se calcula solo)</span></label>
+          <input type="text" inputmode="decimal" id="compra-monto" placeholder="0" />
         </div>
         <div class="field">
           <input type="date" id="compra-fecha" value="${new Date().toISOString().slice(0, 10)}" />
@@ -1602,7 +1833,40 @@ function openModalDetalleInversion(invInicial) {
     `;
 
     overlay.querySelector('#modal-close').addEventListener('click', () => overlay.remove());
-    activarSeparadorMiles(overlay.querySelector('#compra-monto'));
+
+    // Cantidad × precio = total, calculado en vivo mientras escribes.
+    const inCant = overlay.querySelector('#compra-cantidad');
+    const inPrecio = overlay.querySelector('#compra-precio');
+    const inMonto = overlay.querySelector('#compra-monto');
+    function recalcTotal() {
+      const c = numeroDecimal(inCant.value);
+      const p = numeroDecimal(inPrecio.value);
+      if (c > 0 && p > 0) inMonto.value = String(Number((c * p).toFixed(esUSD ? 2 : 0)));
+    }
+    inCant.addEventListener('input', recalcTotal);
+    inPrecio.addEventListener('input', recalcTotal);
+
+    // Traer precio desde CoinGecko para este activo
+    const btnTraer = overlay.querySelector('#inv-traer-precio');
+    if (btnTraer) btnTraer.addEventListener('click', async () => {
+      const errEl = overlay.querySelector('#inv-precio-error');
+      if (errEl) errEl.style.display = 'none';
+      btnTraer.disabled = true;
+      const textoOriginal = btnTraer.innerHTML;
+      btnTraer.textContent = 'Consultando...';
+      try {
+        const mapa = await precios.obtenerPreciosCripto([inv.coingecko_id], mon.toLowerCase());
+        const precio = mapa[inv.coingecko_id];
+        if (typeof precio !== 'number') throw new Error('No se encontró "' + inv.coingecko_id + '" en CoinGecko');
+        domain.actualizarPrecioUnidad(inv.id, precio, new Date().toISOString());
+        renderContenido();
+        render();
+      } catch (e) {
+        btnTraer.disabled = false;
+        btnTraer.innerHTML = textoOriginal;
+        if (errEl) { errEl.textContent = precios.mensajeDeError(e); errEl.style.display = 'block'; }
+      }
+    });
 
     overlay.querySelector('#inv-usa-precio').addEventListener('change', (e) => {
       domain.configurarPrecioUnidad(inv.id, {
@@ -1614,21 +1878,19 @@ function openModalDetalleInversion(invInicial) {
     });
 
     const precioInput = overlay.querySelector('#inv-precio-unidad');
-    if (precioInput) activarSeparadorMiles(precioInput);
     const btnActualizarPrecio = overlay.querySelector('#inv-actualizar-precio');
     if (btnActualizarPrecio) btnActualizarPrecio.addEventListener('click', () => {
-      const precio = valorMiles(precioInput);
-      domain.configurarPrecioUnidad(inv.id, { usaPrecioUnidad: true, precioActualUnidad: precio });
+      const precio = numeroDecimal(precioInput.value);
+      domain.actualizarPrecioUnidad(inv.id, precio, new Date().toISOString());
       renderContenido();
       render();
     });
 
     const manualInput = overlay.querySelector('#inv-actual-manual');
-    if (manualInput) activarSeparadorMiles(manualInput);
     const btnActualizarManual = overlay.querySelector('#inv-actualizar-manual');
     if (btnActualizarManual) btnActualizarManual.addEventListener('click', () => {
-      const nuevoValor = valorMiles(manualInput);
-      domain.actualizarInversion(inv.id, { nombre: inv.nombre, tipo: inv.tipo, valorInvertido: inv.valor_invertido, valorActual: nuevoValor });
+      const nuevoValor = numeroDecimal(manualInput.value);
+      domain.actualizarInversion(inv.id, { nombre: inv.nombre, tipo: inv.tipo, valorInvertido: inv.valor_invertido, valorActual: nuevoValor, moneda: inv.moneda });
       renderContenido();
       render();
     });
@@ -1644,12 +1906,21 @@ function openModalDetalleInversion(invInicial) {
     });
 
     overlay.querySelector('#compra-guardar').addEventListener('click', () => {
-      const monto = valorMiles(overlay.querySelector('#compra-monto'));
-      const cantidadTexto = overlay.querySelector('#compra-cantidad').value.trim();
-      const cantidad = cantidadTexto ? Number(cantidadTexto.replace(/[^\d.]/g, '')) : null;
+      const cantidad = numeroDecimal(overlay.querySelector('#compra-cantidad').value);
+      const precioUnidad = numeroDecimal(overlay.querySelector('#compra-precio').value);
+      const monto = numeroDecimal(overlay.querySelector('#compra-monto').value);
       const fecha = overlay.querySelector('#compra-fecha').value;
-      if (!monto || monto <= 0) return;
-      domain.agregarCompraInversion(inv.id, { fecha, montoInvertido: monto, cantidad });
+      // Basta con cantidad+precio, o con el monto total.
+      if ((!cantidad || !precioUnidad) && !monto) {
+        alert('Escribe cantidad y precio por unidad, o al menos el total invertido.');
+        return;
+      }
+      domain.agregarCompraInversion(inv.id, {
+        fecha,
+        montoInvertido: monto || null,
+        cantidad: cantidad || null,
+        precioUnidad: precioUnidad || null,
+      });
       renderContenido();
       render();
     });

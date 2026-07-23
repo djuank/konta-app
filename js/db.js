@@ -96,6 +96,28 @@ function ensureColumnasNuevas() {
     db.run('ALTER TABLE inversiones ADD COLUMN precio_actual_unidad REAL NOT NULL DEFAULT 0');
     persist();
   }
+  // Moneda del activo: las inversiones existentes estaban en COP.
+  if (!columnasInv.includes('moneda')) {
+    db.run("ALTER TABLE inversiones ADD COLUMN moneda TEXT NOT NULL DEFAULT 'COP'");
+    persist();
+  }
+  if (!columnasInv.includes('coingecko_id')) {
+    db.run('ALTER TABLE inversiones ADD COLUMN coingecko_id TEXT DEFAULT NULL');
+    persist();
+  }
+  if (!columnasInv.includes('precio_actualizado_en')) {
+    db.run('ALTER TABLE inversiones ADD COLUMN precio_actualizado_en TEXT DEFAULT NULL');
+    persist();
+  }
+  // Precio unitario explícito en cada compra (para el DCA).
+  const columnasCompras = queryAll("PRAGMA table_info(inversiones_compras)").map((c) => c.name);
+  if (!columnasCompras.includes('precio_unidad')) {
+    db.run('ALTER TABLE inversiones_compras ADD COLUMN precio_unidad REAL');
+    // Backfill: las compras viejas tienen monto y cantidad, así que el
+    // precio unitario se puede deducir sin perder información.
+    db.run('UPDATE inversiones_compras SET precio_unidad = monto_invertido / cantidad WHERE cantidad IS NOT NULL AND cantidad > 0 AND precio_unidad IS NULL');
+    persist();
+  }
   corregirCategoriasFaltantes();
 }
 

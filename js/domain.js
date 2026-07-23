@@ -587,17 +587,55 @@ export function planGastoConsciente() {
 }
 
 // --- Inversiones ---
+//
+// Regla central: cada inversión tiene una MONEDA nativa (normalmente USD
+// para cripto/ETF/bolsa, que es como se compra en plataformas como
+// Quantfury). Todos los cálculos del activo — precio promedio, ganancia,
+// rentabilidad — se hacen en ESA moneda, sin mezclarla con pesos.
+// La conversión a COP es solo una vista al final, usando la TRM, y sirve
+// para saber cuánto pesa ese activo dentro del patrimonio total.
+
+const CLAVE_TRM = 'trm_usd_cop';
+const CLAVE_TRM_FECHA = 'trm_actualizada_en';
+
+export function obtenerTRM() {
+  const v = parseFloat(getConfig(CLAVE_TRM));
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+export function obtenerTRMFecha() {
+  return getConfig(CLAVE_TRM_FECHA) || null;
+}
+
+export function guardarTRM(valor, fechaISO) {
+  setConfig(CLAVE_TRM, valor);
+  setConfig(CLAVE_TRM_FECHA, fechaISO || new Date().toISOString());
+}
+
+// Convierte un monto de la moneda del activo a COP (la moneda del patrimonio).
+export function aCOP(monto, moneda) {
+  if (moneda !== 'USD') return monto;
+  const trm = obtenerTRM();
+  return trm > 0 ? monto * trm : 0;
+}
 
 export function listaInversiones() {
   return queryAll('SELECT * FROM inversiones ORDER BY valor_actual DESC');
 }
 
+// Total del portafolio a valor de MERCADO, convertido a COP.
+// Esto es lo que suma al patrimonio: lo que valen hoy tus activos.
 export function totalInvertido() {
-  return queryOne('SELECT COALESCE(SUM(valor_actual), 0) AS total FROM inversiones').total;
+  const invs = listaInversiones();
+  return invs.reduce((s, inv) => s + aCOP(inv.valor_actual, inv.moneda), 0);
 }
 
+// Capital APORTADO (lo que salió de tu bolsillo), convertido a COP.
+// Se muestra aparte del valor de mercado para poder distinguir tu
+// disciplina de ahorro de la volatilidad del mercado.
 export function totalCostoInvertido() {
-  return queryOne('SELECT COALESCE(SUM(valor_invertido), 0) AS total FROM inversiones').total;
+  const invs = listaInversiones();
+  return invs.reduce((s, inv) => s + aCOP(inv.valor_invertido, inv.moneda), 0);
 }
 
 export function rentabilidadInversion(inv) {
@@ -611,24 +649,82 @@ export function rentabilidadTotalPortafolio() {
   return ((totalInvertido() - costo) / costo) * 100;
 }
 
+// Resumen de la posición de un activo, todo en SU moneda nativa.
+// Es el bloque que responde: cuánto tengo, a qué precio promedio compré,
+// a cuánto está hoy, y cuánto gano o pierdo.
+export function resumenPosicion(inversionId) {
+  const inv = queryOne('SELECT * FROM inversiones WHERE id = ?', [inversionId]);
+  if (!inv) return null;
+  const compras = listaComprasInversion(inversionId);
+  const cantidad = compras.reduce((s, c) => s + (c.cantidad || 0), 0);
+  const invertido = compras.reduce((s, c) => s + c.monto_invertido, 0);
+  // Precio promedio PONDERADO: no es el promedio de los precios, es el
+  // total invertido dividido por la cantidad total. Es el número que de
+  // verdad importa en DCA.
+  const precioPromedio = cantidad > 0 ? invertido / cantidad : 0;
+  const precioActual = inv.precio_actual_unidad || 0;
+  const valorMercado = inv.usa_precio_unidad ? cantidad * precioActual : inv.valor_actual;
+  const ganancia = valorMercado - invertido;
+  const gananciaPct = invertido > 0 ? (ganancia / invertido) * 100 : 0;
+  return {
+    inversion: inv,
+    moneda: inv.moneda || 'COP',
+    cantidad,
+    invertido,
+    precioPromedio,
+    precioActual,
+    valorMercado,
+    ganancia,
+    gananciaPct,
+    numeroCompras: compras.length,
+    // Vista en pesos (referencial, depende de la TRM)
+    invertidoCOP: aCOP(invertido, inv.moneda),
+    valorMercadoCOP: aCOP(valorMercado, inv.moneda),
+    gananciaCOP: aCOP(ganancia, inv.moneda),
+  };
+}
+
 export function distribucionInversionesPorTipo() {
-  const rows = queryAll(
-    `SELECT tipo, COALESCE(SUM(valor_actual), 0) AS total FROM inversiones GROUP BY tipo ORDER BY total DESC`
-  );
+  const invs = listaInversiones();
+  const porTipo = {};
+  for (const inv of invs) {
+    const valorCOP = aCOP(inv.valor_actual, inv.moneda);
+    porTipo[inv.tipo] = (porTipo[inv.tipo] || 0) + valorCOP;
+  }
+  const rows = Object.entries(porTipo)
+    .map(([tipo, total]) => ({ tipo, total }))
+    .sort((a, b) => b.total - a.total);
   const total = rows.reduce((s, r) => s + r.total, 0);
   return rows.map((r) => ({ ...r, porcentaje: total > 0 ? (r.total / total) * 100 : 0 }));
 }
 
-export function agregarInversion({ nombre, tipo, valorInvertido, valorActual }) {
-  run('INSERT INTO inversiones (nombre, tipo, valor_invertido, valor_actual) VALUES (?, ?, ?, ?)', [
-    nombre, tipo, valorInvertido, valorActual,
-  ]);
+export function agregarInversion({ nombre, tipo, valorInvertido, valorActual, moneda, coingeckoId, usaPrecioUnidad, precioActualUnidad }) {
+  return runYObtenerId(
+    `INSERT INTO inversiones (nombre, tipo, valor_invertido, valor_actual, moneda, coingecko_id, usa_precio_unidad, precio_actual_unidad)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [nombre, tipo, valorInvertido || 0, valorActual || 0, moneda || 'COP',
+     coingeckoId || null, usaPrecioUnidad ? 1 : 0, precioActualUnidad || 0]
+  );
 }
 
-export function actualizarInversion(id, { nombre, tipo, valorInvertido, valorActual }) {
-  run('UPDATE inversiones SET nombre = ?, tipo = ?, valor_invertido = ?, valor_actual = ? WHERE id = ?', [
-    nombre, tipo, valorInvertido, valorActual, id,
+export function actualizarInversion(id, { nombre, tipo, valorInvertido, valorActual, moneda, coingeckoId }) {
+  const inv = queryOne('SELECT * FROM inversiones WHERE id = ?', [id]);
+  if (!inv) return;
+  run(
+    `UPDATE inversiones SET nombre = ?, tipo = ?, valor_invertido = ?, valor_actual = ?,
+     moneda = ?, coingecko_id = ? WHERE id = ?`,
+    [nombre, tipo, valorInvertido, valorActual, moneda || inv.moneda,
+     coingeckoId !== undefined ? coingeckoId : inv.coingecko_id, id]
+  );
+  recalcularTotalesInversion(id);
+}
+
+// Guarda un precio traído de la API (o escrito a mano) y recalcula.
+export function actualizarPrecioUnidad(inversionId, precio, fechaISO) {
+  run('UPDATE inversiones SET precio_actual_unidad = ?, usa_precio_unidad = 1, precio_actualizado_en = ? WHERE id = ?', [
+    precio, fechaISO || new Date().toISOString(), inversionId,
   ]);
+  recalcularTotalesInversion(inversionId);
 }
 
 export function eliminarInversion(id) {
@@ -648,9 +744,21 @@ export function cantidadTotalInversion(inversionId) {
   return queryOne('SELECT COALESCE(SUM(cantidad), 0) AS total FROM inversiones_compras WHERE inversion_id = ?', [inversionId]).total;
 }
 
-export function agregarCompraInversion(inversionId, { fecha, montoInvertido, cantidad }) {
-  run('INSERT INTO inversiones_compras (inversion_id, fecha, monto_invertido, cantidad) VALUES (?, ?, ?, ?)', [
-    inversionId, fecha, montoInvertido, cantidad || null,
+// Una compra se puede registrar de dos formas equivalentes:
+//   - cantidad + precio unitario  (como se piensa en DCA: "0.002 BTC a 62.000")
+//   - monto total + cantidad      (como quedaba antes)
+// Se completa el dato que falte para que ambos caminos guarden lo mismo.
+export function agregarCompraInversion(inversionId, { fecha, montoInvertido, cantidad, precioUnidad }) {
+  let monto = montoInvertido;
+  let precio = precioUnidad;
+  if ((monto === undefined || monto === null || monto === '') && cantidad && precio) {
+    monto = cantidad * precio;
+  }
+  if ((precio === undefined || precio === null || precio === '') && cantidad && monto) {
+    precio = cantidad > 0 ? monto / cantidad : null;
+  }
+  run('INSERT INTO inversiones_compras (inversion_id, fecha, monto_invertido, cantidad, precio_unidad) VALUES (?, ?, ?, ?, ?)', [
+    inversionId, fecha, monto || 0, cantidad || null, precio || null,
   ]);
   recalcularTotalesInversion(inversionId);
 }

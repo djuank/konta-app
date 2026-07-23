@@ -1,6 +1,6 @@
 // Service worker: guarda una copia de la app en el dispositivo para que
 // abra sin internet una vez que la visitaste la primera vez.
-const CACHE_NAME = 'konta-app-v7';
+const CACHE_NAME = 'konta-app-v8';
 const ARCHIVOS_BASE = [
   './',
   './index.html',
@@ -12,6 +12,7 @@ const ARCHIVOS_BASE = [
   './js/schema.js',
   './js/storage.js',
   './js/security.js',
+  './js/precios.js',
   './vendor/sql-wasm.js',
   './vendor/sql-wasm.wasm',
   './vendor/chart.umd.js',
@@ -42,6 +43,17 @@ self.addEventListener('activate', (event) => {
 // Cache-first: sirve del cache si existe, y de paso lo actualiza en segundo plano.
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+
+  // Las consultas de precios (CoinGecko, TRM) NUNCA se cachean: si no,
+  // al pedir "precio de hoy" el service worker devolvería el de ayer.
+  // Van siempre directo a la red, y si falla, falla de verdad para que
+  // la app pueda avisar en vez de mostrar un dato viejo como si fuera nuevo.
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then((cached) => {
       const fetchPromise = fetch(event.request)

@@ -101,7 +101,16 @@ CREATE TABLE IF NOT EXISTS inversiones (
   valor_invertido REAL NOT NULL DEFAULT 0,
   valor_actual REAL NOT NULL DEFAULT 0,
   usa_precio_unidad INTEGER NOT NULL DEFAULT 0,
-  precio_actual_unidad REAL NOT NULL DEFAULT 0
+  precio_actual_unidad REAL NOT NULL DEFAULT 0,
+  -- Moneda en la que cotiza y se compra el activo. Para cripto/ETF/bolsa
+  -- normalmente 'USD' (así se compra en Quantfury). Los cálculos del activo
+  -- (promedio, ganancia) se hacen SIEMPRE en esta moneda; la conversión a
+  -- COP es solo una vista, usando la TRM.
+  moneda TEXT NOT NULL DEFAULT 'COP' CHECK (moneda IN ('COP','USD')),
+  -- Id del activo en CoinGecko (ej. 'bitcoin', 'ethereum') para poder
+  -- traer el precio con un botón. Vacío = precio se actualiza a mano.
+  coingecko_id TEXT DEFAULT NULL,
+  precio_actualizado_en TEXT DEFAULT NULL
 );
 
 -- Historial de compras (DCA) de una inversión: BTC, otra cripto, acciones, etc.
@@ -110,7 +119,10 @@ CREATE TABLE IF NOT EXISTS inversiones_compras (
   inversion_id INTEGER NOT NULL REFERENCES inversiones(id),
   fecha TEXT NOT NULL,
   monto_invertido REAL NOT NULL,
-  cantidad REAL
+  cantidad REAL,
+  -- Precio unitario pagado en esa compra, en la moneda del activo.
+  -- Es lo que uno realmente piensa al hacer DCA ("compré a 62.000 USD").
+  precio_unidad REAL
 );
 
 CREATE TABLE IF NOT EXISTS patrimonio_historico (
