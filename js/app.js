@@ -145,7 +145,11 @@ function abrirPanelNotificaciones() {
 //   - cerrar con la tecla Escape
 //   - bloquear el scroll del fondo mientras el modal está abierto
 
-const ALTURA_PARA_PANTALLA_COMPLETA = 0.72; // 72% de la pantalla
+// La hoja normal ya puede ocupar hasta el 85% de la pantalla y se scrollea
+// bien. Solo tiene sentido irse a pantalla completa cuando el contenido
+// desborda de verdad ese límite; si no, mandábamos a pantalla completa
+// formularios que funcionaban mejor como hoja.
+const ALTURA_PARA_PANTALLA_COMPLETA = 0.95;
 
 function mejorarModal(overlay) {
   const sheet = overlay.querySelector('.modal-sheet');
@@ -165,13 +169,28 @@ function mejorarModal(overlay) {
   }
 
   // Formularios largos → pantalla completa (decidido por contenido real)
-  requestAnimationFrame(() => {
+  // Formularios largos → pantalla completa (decidido por contenido real).
+  // Se mide después de pintar, y con visualViewport cuando existe, que en
+  // iOS refleja el alto real disponible (sin la barra de Safari).
+  const evaluarAltura = () => {
     const alto = sheet.scrollHeight;
-    const disponible = window.innerHeight;
+    const disponible = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
     if (alto > disponible * ALTURA_PARA_PANTALLA_COMPLETA) {
       sheet.classList.add('modal-full');
+    } else {
+      sheet.classList.remove('modal-full');
     }
-  });
+  };
+  requestAnimationFrame(evaluarAltura);
+  // Si el modal se repinta o gira el teléfono, se vuelve a evaluar.
+  const onResize = () => { if (document.body.contains(overlay)) evaluarAltura(); };
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', onResize);
+  overlay.dataset.limpiarResize = '1';
+  overlay._limpiarResize = () => {
+    window.removeEventListener('resize', onResize);
+    window.removeEventListener('orientationchange', onResize);
+  };
 
   cerrarConGesto(overlay, sheet);
   cerrarConEscape(overlay);
@@ -264,6 +283,8 @@ function observarCierre(overlay) {
   const obs = new MutationObserver(() => {
     if (!document.body.contains(overlay)) {
       liberarFondo();
+      // Quitamos los listeners de resize para que no se acumulen
+      if (typeof overlay._limpiarResize === 'function') overlay._limpiarResize();
       obs.disconnect();
     }
   });

@@ -343,6 +343,27 @@ nav.bottom-nav button i { font-size: 21px; transition: transform 0.15s ease; }
   z-index: 2;
 }
 
+/* Un modal plano que además va a pantalla completa necesita respetar la
+   zona del notch / barra de estado. El shorthand `padding` de .modal-plano
+   reseteaba el padding-top de .modal-full, y por eso el botón de cerrar
+   se metía debajo del reloj y la batería. */
+.modal-sheet.modal-plano.modal-full {
+  padding-top: calc(env(safe-area-inset-top) + 8px);
+}
+
+/* En pantalla completa el encabezado se queda fijo arriba, para que el
+   botón de cerrar siempre esté al alcance aunque el formulario sea largo. */
+.modal-sheet.modal-full .row-between:first-of-type,
+.modal-sheet.modal-full .modal-header {
+  position: sticky;
+  top: 0;
+  background: var(--surface-1);
+  z-index: 3;
+  margin-left: -1.25rem;
+  margin-right: -1.25rem;
+  padding: 10px 1.25rem;
+}
+
 .topbar {
   display: flex;
   align-items: center;
